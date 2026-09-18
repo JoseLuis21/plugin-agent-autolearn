@@ -1,0 +1,117 @@
+{
+  "description": "Go hexagonal: repositorio Postgres, regla de dominio y agregacion concurrente.",
+  "commit": "Add customer orders, loyalty discount and totals",
+  "bugs": [
+    {
+      "id": "sql-injection-by-customer",
+      "file": "internal/core/orders/adapters/postgres/repository.go",
+      "symbols": [
+        "ByCustomer",
+        "Repository.ByCustomer"
+      ],
+      "lines": [
+        26,
+        37
+      ],
+      "keywords": [
+        "sql",
+        "inyecc",
+        "inject",
+        "sprintf",
+        "concaten",
+        "interpol"
+      ],
+      "min_severity": "HIGH",
+      "why": "customerID entra a la query por fmt.Sprintf."
+    },
+    {
+      "id": "ignored-query-error",
+      "file": "internal/core/orders/adapters/postgres/repository.go",
+      "symbols": [
+        "ByCustomer",
+        "Repository.ByCustomer"
+      ],
+      "lines": [
+        26,
+        37
+      ],
+      "keywords": [
+        "close",
+        "panic",
+        "scan",
+        "rows.err",
+        "ignor",
+        "descart",
+        "rows, _",
+        "sin comprobar",
+        "unchecked"
+      ],
+      "min_severity": "HIGH",
+      "why": "El error de QueryContext se descarta: rows nil provoca panic; ademas no hay Close, Scan ni rows.Err comprobados."
+    },
+    {
+      "id": "domain-imports-adapter",
+      "file": "internal/core/orders/domain/discount.go",
+      "symbols": [
+        "ApplyLoyaltyDiscount",
+        "discount.go"
+      ],
+      "lines": [
+        1,
+        12
+      ],
+      "keywords": [
+        "domin",
+        "domain",
+        "adapt",
+        "dependenc",
+        "import",
+        "hexagonal",
+        "port"
+      ],
+      "min_severity": "HIGH",
+      "why": "domain importa adapters/loyalty (HTTP): rompe la regla de dependencias; deberia ser un puerto."
+    },
+    {
+      "id": "concurrent-map-write",
+      "file": "internal/core/orders/services/totals.go",
+      "symbols": [
+        "TotalsByCustomer",
+        "OrderService.TotalsByCustomer"
+      ],
+      "lines": [
+        9,
+        28
+      ],
+      "keywords": [
+        "race",
+        "carrera",
+        "concurr",
+        "mutex",
+        "map"
+      ],
+      "min_severity": "HIGH",
+      "why": "Varias goroutines escriben el mismo map sin sincronizacion: fatal error en runtime."
+    }
+  ],
+  "decoys": [
+    {
+      "id": "parametrized-by-id",
+      "file": "internal/core/orders/adapters/postgres/repository.go",
+      "symbols": [
+        "ByID",
+        "Repository.ByID"
+      ],
+      "lines": [
+        19,
+        24
+      ],
+      "keywords": [
+        "sql",
+        "inyecc",
+        "inject"
+      ],
+      "why": "ByID usa $1: reportarlo como inyeccion es falso positivo."
+    }
+  ]
+}

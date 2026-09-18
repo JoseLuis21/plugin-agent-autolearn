@@ -1,0 +1,32 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "agent-autolearn",
+  "description": "Skills de desarrollo y revisión multi-agente de PRs",
+  "owner": {
+    "name": "Jose Luis"
+  },
+  "plugins": [
+    {
+      "name": "agent-autolearn",
+      "description": "Skills que se usan al escribir codigo (arquitectura por stack, seguridad OWASP, tests, resiliencia, refactor seguro) y /pre-pr-review para revisar el diff antes de abrir el PR contra esas mismas leyes.",
+      "version": "2.12.0",
+      "author": {
+        "name": "Jose Luis"
+      },
+      "source": "./plugins/agent-autolearn",
+      "category": "code-review",
+      "keywords": [
+        "review",
+        "pr",
+        "architecture",
+        "nextjs",
+        "golang",
+        "hexagonal",
+        "security",
+        "tests",
+        "resilience",
+        "refactor"
+      ]
+    }
+  ]
+}

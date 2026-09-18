@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "SubagentStop": [
+      {
+        "matcher": ".*(code-reviewer|security-reviewer|edge-case-reviewer|regression-reviewer|test-reviewer|convention-reviewer|nextjs-architecture-reviewer|go-architecture-reviewer|review-aggregator)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/review_usage.py\" hook",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONDONTWRITEBYTECODE=1 python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/review_usage.py\" hook",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

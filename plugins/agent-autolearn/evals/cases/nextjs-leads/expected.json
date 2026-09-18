@@ -1,0 +1,135 @@
+{
+  "description": "Next.js 15 App Router: busqueda, server actions, paginacion y un Client Component.",
+  "commit": "Add lead search, actions, pagination and table",
+  "bugs": [
+    {
+      "id": "sql-injection-search",
+      "file": "app/api/leads/search/route.ts",
+      "symbols": [
+        "GET"
+      ],
+      "lines": [
+        6,
+        13
+      ],
+      "keywords": [
+        "sql",
+        "inyecc",
+        "inject",
+        "concaten",
+        "interpol"
+      ],
+      "min_severity": "HIGH",
+      "why": "term y orgId se interpolan en la query."
+    },
+    {
+      "id": "delete-without-authz",
+      "file": "app/leads/actions.ts",
+      "symbols": [
+        "deleteLead"
+      ],
+      "lines": [
+        23,
+        27
+      ],
+      "keywords": [
+        "auth",
+        "sesion",
+        "session",
+        "org",
+        "tenant",
+        "idor",
+        "permis"
+      ],
+      "min_severity": "HIGH",
+      "why": "Server Action publica borra por id sin sesion ni org_id."
+    },
+    {
+      "id": "unawaited-insert",
+      "file": "app/leads/actions.ts",
+      "symbols": [
+        "createLead"
+      ],
+      "lines": [
+        11,
+        21
+      ],
+      "keywords": [
+        "await",
+        "promise",
+        "promesa",
+        "flotante",
+        "floating",
+        "trag",
+        "swallow"
+      ],
+      "min_severity": "MEDIUM",
+      "why": "db.query sin await: el catch nunca ve el fallo y se responde ok antes de escribir."
+    },
+    {
+      "id": "last-page-dropped",
+      "file": "lib/pagination.ts",
+      "symbols": [
+        "paginate"
+      ],
+      "lines": [
+        3,
+        8
+      ],
+      "keywords": [
+        "floor",
+        "ceil",
+        "ultima",
+        "last",
+        "pagina",
+        "page",
+        "resto",
+        "remainder"
+      ],
+      "min_severity": "MEDIUM",
+      "why": "Math.floor pierde la ultima pagina parcial; con menos de size elementos lastPage es 0."
+    },
+    {
+      "id": "server-module-in-client",
+      "file": "components/LeadTable.tsx",
+      "symbols": [
+        "LeadTable",
+        "LeadTable.tsx"
+      ],
+      "lines": [
+        1,
+        8
+      ],
+      "keywords": [
+        "server-only",
+        "client",
+        "cliente",
+        "servidor",
+        "server",
+        "bundle",
+        "build"
+      ],
+      "min_severity": "BLOCKER",
+      "why": "use client importa lib/db.ts (server-only): el build falla."
+    }
+  ],
+  "decoys": [
+    {
+      "id": "parametrized-head-query",
+      "file": "app/api/leads/search/route.ts",
+      "symbols": [
+        "HEAD"
+      ],
+      "lines": [
+        15,
+        23
+      ],
+      "keywords": [
+        "sql",
+        "inyecc",
+        "inject"
+      ],
+      "why": "La query usa parametros: reportarla como inyeccion es falso positivo."
+    }
+  ]
+}

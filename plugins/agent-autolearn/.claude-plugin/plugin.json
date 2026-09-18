@@ -1,0 +1,22 @@
+{
+  "name": "agent-autolearn",
+  "displayName": "Agent Autolearn — AI Dev Team",
+  "version": "2.12.0",
+  "description": "Herramientas del equipo: las skills que se usan al escribir codigo (arquitectura por stack, seguridad OWASP, tests, resiliencia y refactor seguro) y /pre-pr-review, la revision multi-agente del diff antes de abrir un PR que verifica esas mismas leyes.",
+  "author": {
+    "name": "Jose Luis"
+  },
+  "license": "MIT",
+  "keywords": [
+    "review",
+    "pr",
+    "architecture",
+    "nextjs",
+    "golang",
+    "hexagonal",
+    "security",
+    "tests",
+    "resilience",
+    "refactor"
+  ]
+}
