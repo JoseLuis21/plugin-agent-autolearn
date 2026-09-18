@@ -2,6 +2,8 @@
 """Sincroniza las corridas de /pre-pr-review con una API Agent Autolearn. Opcional y offline primero.
 
 Uso:
+  review_sync.py setup [PERFIL] [--url URL] [--default] [--no-repo] [--no-alias]
+                                   # todo en uno: valida el token, guarda el perfil, lo asigna al repo actual y crea el alias
   review_sync.py configure --profile NOMBRE --url URL [--default]   # token: AGENT_AUTOLEARN_TOKEN o prompt oculto
   review_sync.py profiles
   review_sync.py use NOMBRE [--repo DIR]                             # escribe .agent-autolearn.json en el repo
@@ -40,6 +42,7 @@ from ledger import huella  # noqa: E402  Misma huella que el ledger.
 PLUGIN_ROOT_DEFAULT = SCRIPTS.parent
 NS = uuid.uuid5(uuid.NAMESPACE_URL, 'agent-autolearn/review-run')
 REPO_FILE = '.agent-autolearn.json'
+DEFAULT_URL = 'https://agent-autolearn.josephluihs.workers.dev'  # setup la usa si no hay --url ni AGENT_AUTOLEARN_URL
 MAX_TEXT = 4000
 TRANSIENT = {408, 425, 429, 500, 502, 503, 504}
 LOCK_STALE_SECONDS = 600
@@ -779,27 +782,109 @@ def push(repo, timeout=10.0, retry_failed=False):
 
 # ---------- comandos ----------
 
-def cmd_configure(args):
-    url = args.url.strip().rstrip('/')
-    url = re.sub(r'/v1$', '', url)
+def normalize_url(raw):
+    url = re.sub(r'/v1$', '', raw.strip().rstrip('/'))
     if not re.match(r'^https?://[^\s/]+', url):
         raise SyncError('--url debe ser http(s)://host[:puerto].')
+    return url
+
+
+def read_token(profile):
     token = os.environ.get('AGENT_AUTOLEARN_TOKEN')
     if not token:
         if not sys.stdin.isatty():
             raise SyncError('Define AGENT_AUTOLEARN_TOKEN o ejecuta el comando en una terminal para escribir el token.')
-        token = getpass.getpass(f'Token de instalacion para {args.profile} (no se muestra): ')
+        token = getpass.getpass(f'Token de instalacion para {profile} (no se muestra): ')
     token = token.strip()
     if not token:
         raise SyncError('Token vacio.')
+    return token
+
+
+def save_profile(name, url, token, default):
+    """Solo marca el perfil por defecto si se pide: un repo sin .agent-autolearn.json no debe acabar
+    enviando a un workspace que nadie eligio."""
     data = load_config()
-    data['profiles'][args.profile] = {'url': url, 'token': token}
-    if args.default or not data.get('default'):
-        data['default'] = args.profile
+    data['profiles'][name] = {'url': url, 'token': token}
+    if default:
+        data['default'] = name
     save_config(data)
+    return data.get('default') == name
+
+
+def cmd_configure(args):
+    url = normalize_url(args.url)
+    token = read_token(args.profile)
+    is_default = save_profile(args.profile, url, token, args.default)
     print(f"Perfil '{args.profile}' guardado en {config_path()} (token {token_prefix(token)}).")
-    if data.get('default') == args.profile:
+    if is_default:
         print('Es el perfil por defecto.')
+
+
+def stable_script_path():
+    """Ruta del script que sobrevive a /plugin update: el clon del marketplace, no la cache versionada."""
+    here = Path(__file__).resolve()
+    marketplace = Path.home() / '.claude' / 'plugins' / 'marketplaces' / 'agent-autolearn' / 'plugins' / 'agent-autolearn' / 'scripts' / here.name
+    return marketplace if marketplace.is_file() else here
+
+
+def shell_rc():
+    shell = Path(os.environ.get('SHELL') or '').name
+    if shell == 'zsh':
+        return Path(os.environ.get('ZDOTDIR') or Path.home()) / '.zshrc'
+    if shell == 'bash':
+        return Path.home() / '.bashrc'
+    return None
+
+
+def install_alias():
+    """(rc, estado) con estado 'added' | 'present' | None si la shell no es zsh ni bash."""
+    rc = shell_rc()
+    if not rc:
+        return None, None
+    current = rc.read_text(encoding='utf-8') if rc.exists() else ''
+    if re.search(r'^\s*alias review-sync=', current, re.M):
+        return rc, 'present'
+    sep = '' if not current or current.endswith('\n') else '\n'
+    with rc.open('a', encoding='utf-8') as fh:
+        fh.write(f'{sep}# agent-autolearn: cliente de sincronizacion\nalias review-sync="python3 {stable_script_path()}"\n')
+    return rc, 'added'
+
+
+def cmd_setup(args):
+    data = load_config()
+    existing = data['profiles'].get(args.profile) or {}
+    url = normalize_url(args.url or os.environ.get('AGENT_AUTOLEARN_URL') or existing.get('url') or DEFAULT_URL)
+    print(f'Instancia: {url}')
+    print('Crea el token en el panel: workspace de destino → Workspace → Tokens → Crear token (Instalacion, ingest + read).')
+    token = read_token(args.profile)
+    try:
+        _, me, _ = Client({'url': url, 'token': token}, args.timeout, backoff=0).request('GET', '/v1/me')
+    except HttpError as exc:
+        raise SyncError(f'La API rechazo el token ({exc.message()}). No se guardo nada.') from None
+    except Transient as exc:
+        raise SyncError(f'No se pudo contactar {url} ({exc}). No se guardo nada.') from None
+    workspace = (me.get('organization') or {}).get('name') or '?'
+    caps = sorted(k for k, v in (me.get('capabilities') or {}).items() if v)
+    if 'ingest' not in caps:
+        raise SyncError(f"El token de '{workspace}' no tiene permiso ingest. Crea uno de instalacion con ingest + read.")
+    is_default = save_profile(args.profile, url, token, args.default)
+    print(f"✓ Perfil '{args.profile}' → workspace '{workspace}' (token {token_prefix(token)}){' · por defecto' if is_default else ''}")
+
+    if not args.no_repo:
+        root = git(args.repo, 'rev-parse', '--show-toplevel')
+        if root:
+            write_json(Path(root) / REPO_FILE, {'profile': args.profile})
+            print(f"✓ {Path(root).name}: este repo envia sus revisiones a '{workspace}' ({REPO_FILE})")
+        else:
+            print(f"· No estas en un repo git: en cada repo ejecuta  review-sync use {args.profile}")
+
+    if not args.no_alias:
+        rc, alias_state = install_alias()
+        if alias_state == 'added':
+            print(f'✓ Alias review-sync añadido a {rc}. Abre una terminal nueva o ejecuta: source {rc}')
+        elif alias_state is None:
+            print(f'· Shell no reconocida; alias manual: alias review-sync="python3 {stable_script_path()}"')
 
 
 def cmd_profiles(_args):
@@ -893,6 +978,15 @@ def main(argv=None):
     p.add_argument('--url', required=True)
     p.add_argument('--default', action='store_true')
     p.set_defaults(fn=cmd_configure)
+    p = sub.add_parser('setup')
+    p.add_argument('profile', nargs='?', default='personal')
+    p.add_argument('--url')
+    p.add_argument('--default', action='store_true')
+    p.add_argument('--repo', default='.')
+    p.add_argument('--no-repo', action='store_true')
+    p.add_argument('--no-alias', action='store_true')
+    p.add_argument('--timeout', type=float, default=10.0)
+    p.set_defaults(fn=cmd_setup)
     sub.add_parser('profiles').set_defaults(fn=cmd_profiles)
     p = sub.add_parser('use')
     p.add_argument('name')

@@ -220,6 +220,45 @@ class ReviewSyncTests(unittest.TestCase):
         self.assertEqual(review_sync.resolve_profile(repo.root)[0], 'otro')
         self.assertNotIn('token', (repo.root / '.agent-autolearn.json').read_text())
 
+    def setup_cmd(self, *args, token=TOKEN, cwd_repo=None):
+        from contextlib import redirect_stderr, redirect_stdout
+        from io import StringIO
+        os.environ.update(HOME=str(self.temp / 'home'), SHELL='/bin/zsh', AGENT_AUTOLEARN_TOKEN=token)
+        os.environ.pop('ZDOTDIR', None)
+        (self.temp / 'home').mkdir(exist_ok=True)
+        out, err = StringIO(), StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = review_sync.main(['setup', *args, '--url', self.url,
+                                     '--repo', str(cwd_repo or self.temp / 'home')])
+        os.environ.pop('AGENT_AUTOLEARN_TOKEN')
+        return code, out.getvalue() + err.getvalue()
+
+    def test_setup_validates_token_links_repo_and_adds_alias_once(self):
+        repo = ReviewRepo(self, self.temp / 'repo-setup')
+        code, out = self.setup_cmd(cwd_repo=repo.root)
+        self.assertEqual(code, 0, out)
+        self.assertIn("workspace 'Workspace Personal'", out)
+        self.assertNotIn(TOKEN, out)
+        self.assertEqual(review_sync.resolve_profile(repo.root), ('personal', '.agent-autolearn.json del repo'))
+        self.assertIsNone(review_sync.load_config().get('default'))  # Sin --default, otros repos no envian nada.
+        rc = self.temp / 'home' / '.zshrc'
+        self.assertIn('alias review-sync="python3 ', rc.read_text())
+        self.assertEqual(self.setup_cmd('--no-repo')[0], 0)  # Repetirlo no duplica el alias.
+        self.assertEqual(rc.read_text().count('alias review-sync='), 1)
+
+    def test_setup_with_rejected_token_saves_nothing(self):
+        repo = ReviewRepo(self, self.temp / 'repo-bad')
+        code, out = self.setup_cmd('empresa', '--default', token='alt_' + 'z' * 40, cwd_repo=repo.root)
+        self.assertEqual(code, 2)
+        self.assertIn('No se guardo nada', out)
+        self.assertEqual(review_sync.load_config()['profiles'], {})
+        self.assertFalse((repo.root / '.agent-autolearn.json').exists())
+        self.assertFalse((self.temp / 'home' / '.zshrc').exists())
+
+    def test_configure_without_default_flag_never_becomes_default(self):
+        self.configure('empresa', default=False)
+        self.assertIsNone(review_sync.load_config().get('default'))
+
     def test_without_profile_sync_is_disabled_not_an_error(self):
         repo, run = self.finalized_run()
         self.assertEqual(review_sync.enqueue(run['run_dir'])['queued'], False)

@@ -375,9 +375,28 @@ En el panel de la instancia:
 Repite para cada workspace al que quieras enviar revisiones. Necesitas ser administrador del workspace; si no lo
 eres, pide el token a quien lo administra. Un token de un workspace no sirve para otro.
 
-#### 2. Crea un perfil por workspace
+#### 2. Configuración rápida: un comando
 
-El script viene con el plugin. Claude Code guarda un clon del marketplace en una ruta estable:
+Desde la raíz del repo que quieres conectar, en tu terminal (no dentro de Claude Code, porque pide el token):
+
+```bash
+python3 ~/.claude/plugins/marketplaces/agent-autolearn/plugins/agent-autolearn/scripts/review_sync.py setup personal
+```
+
+Pega el token cuando lo pida (no se muestra). `setup`:
+
+1. Comprueba el token contra la API y te dice a qué workspace pertenece. Si la API lo rechaza, no guarda nada.
+2. Guarda el perfil `personal` con la URL de la instancia (`https://agent-autolearn.josephluihs.workers.dev`, o la de
+   `--url`/`AGENT_AUTOLEARN_URL`).
+3. Asigna ese perfil al repo actual (`.agent-autolearn.json`). Fuera de un repo, se lo salta.
+4. Añade el alias `review-sync` a tu `~/.zshrc` o `~/.bashrc` (una sola vez).
+
+Para otro workspace, repítelo con otro nombre desde uno de sus repos: `review-sync setup empresa`. Opciones:
+`--default` (usar este perfil en repos sin `.agent-autolearn.json`), `--no-repo`, `--no-alias`.
+
+Con eso ya está: salta al paso 4 para comprobarlo. Los pasos siguientes explican lo mismo por partes.
+
+#### 2b. Configuración manual
 
 ```bash
 S="$HOME/.claude/plugins/marketplaces/agent-autolearn/plugins/agent-autolearn/scripts/review_sync.py"
