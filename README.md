@@ -394,7 +394,15 @@ Pega el token cuando lo pida (no se muestra). `setup`:
 Para otro workspace, repítelo con otro nombre desde uno de sus repos: `review-sync setup empresa`. Opciones:
 `--default` (usar este perfil en repos sin `.agent-autolearn.json`), `--no-repo`, `--no-alias`.
 
-Con eso ya está: salta al paso 4 para comprobarlo. Los pasos siguientes explican lo mismo por partes.
+**`setup` solo asigna el perfil al repo donde lo ejecutas.** Cada repo que quieras sincronizar necesita su perfil
+(salvo que uses `--default`); si no, sus revisiones no se envían y `review-sync status` dice «no hay perfil activo»:
+
+```bash
+cd ~/code/otro-repo && review-sync use personal     # una vez por repo
+```
+
+Si `review-sync` no existe todavía, abre una terminal nueva (el alias se carga al iniciarla). Comprueba con el paso 4.
+Los pasos 2b y 3 explican lo mismo por partes.
 
 #### 2b. Configuración manual
 
