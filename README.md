@@ -348,41 +348,128 @@ manual: `plugins/agent-autolearn/skills/pre-pr-review/references/token-usage.md`
 
 ### Sincronizar con Agent Autolearn (opcional)
 
-Cada corrida puede enviarse a una API Agent Autolearn para ver estadisticas, dar feedback y pedir
-mejoras de las skills desde el panel. Es opcional: sin perfil activo no se envia nada, y un fallo de
-red o de la API nunca cambia el veredicto ni bloquea la revision. Al finalizar, el orquestador encola
-la corrida (sin red) y lanza el envio en segundo plano.
+Cada corrida puede enviarse a una API [Agent Autolearn](https://github.com/JoseLuis21/agent-autolearn) para ver
+estadísticas, dar feedback y pedir mejoras de las skills desde su panel. Es opcional: sin perfil activo no se envía
+nada, y un fallo de red o de la API nunca cambia el veredicto ni bloquea la revisión. Al terminar, el orquestador
+encola la corrida (sin red) y la envía en segundo plano.
 
-Un **perfil** es una URL de API mas un token de instalacion. El token decide el workspace de destino,
-asi que con dos perfiles puedes mandar unos repos a un workspace y otros a otro:
+**Conceptos**
+
+| | Qué es |
+|---|---|
+| **Instancia** | Una API Agent Autolearn desplegada. La actual es `https://agent-autolearn.josephluihs.workers.dev`. |
+| **Workspace** | Un espacio aislado dentro de la instancia (por ejemplo «Personal» y el de tu empresa), con sus propios datos, miembros y configuración de IA. |
+| **Token de instalación** | Credencial que emite un workspace. **El token decide a qué workspace llegan las revisiones.** |
+| **Perfil** | En tu máquina: nombre + URL de la instancia + token. Un perfil por workspace. |
+| **`.agent-autolearn.json`** | En cada repo: qué perfil usa ese repo. No contiene secretos. |
+
+#### 1. Obtén un token por workspace
+
+En el panel de la instancia:
+
+1. Elige el workspace en el selector de la barra lateral.
+2. Ve a **Workspace → Tokens → Crear token**.
+3. Tipo **Instalación del plugin**; permisos **ingest** y **read**. Opcionalmente, limítalo a ciertos repositorios.
+4. Copia el token (`alt_…`): se muestra una sola vez.
+
+Repite para cada workspace al que quieras enviar revisiones. Necesitas ser administrador del workspace; si no lo
+eres, pide el token a quien lo administra. Un token de un workspace no sirve para otro.
+
+#### 2. Crea un perfil por workspace
+
+El script viene con el plugin. Claude Code guarda un clon del marketplace en una ruta estable:
 
 ```bash
 S="$HOME/.claude/plugins/marketplaces/agent-autolearn/plugins/agent-autolearn/scripts/review_sync.py"
-# el token se pide sin eco (o se lee de AGENT_AUTOLEARN_TOKEN); nunca va en la linea de comandos
-python3 "$S" configure --profile personal --url https://tu-api.example.dev --default
-python3 "$S" configure --profile empresa  --url https://tu-api.example.dev
+alias review-sync="python3 $S"      # opcional: añádelo a tu ~/.zshrc o ~/.bashrc
 
-cd ~/code/repo-de-la-empresa && python3 "$S" use empresa     # escribe .agent-autolearn.json
-cd ~/code/mi-proyecto        && python3 "$S" use personal
+API=https://agent-autolearn.josephluihs.workers.dev
 
-python3 "$S" profiles        # perfiles con el prefijo del token, nunca el token completo
-python3 "$S" status          # perfil activo, workspace segun la API y estado de la cola
-python3 "$S" push            # reintenta lo pendiente; --retry-failed para los que fallaron
+review-sync configure --profile personal --url $API --default   # pide el token sin mostrarlo
+review-sync configure --profile empresa  --url $API
+review-sync profiles                                             # nombre, URL y prefijo del token
 ```
 
-- Los tokens viven en `~/.config/agent-autolearn/config.json` (permisos 600). `.agent-autolearn.json`
-  solo contiene el nombre del perfil: puede commitearse para que todo el equipo use el mismo workspace
-  en ese repo.
-- Perfil activo, en este orden: `AGENT_AUTOLEARN_PROFILE`, `.agent-autolearn.json` del repo, perfil por
-  defecto. Si ninguno aplica, la sincronizacion queda desactivada.
-- La cola y el progreso viven en `.pre-pr-review/sync/`, que nunca se commitea. Reenviar no duplica
-  corridas ni tokens: cada paso lleva una `Idempotency-Key` estable. Los fallos temporales quedan
-  `pending`; los de esquema o permisos quedan `sync_failed` con su motivo y no se reintentan solos.
-- Antes de encolar se redactan claves y tokens, se omite la evidencia de archivos `.env`/`.pem`/`.key`
-  y se recorta cada texto a 4000 caracteres. Nunca se envian patches, transcripts ni la ruta local:
-  el repo se identifica por su remoto `origin` sin credenciales.
-- Las versiones de skills y agentes se registran con el commit del plugin instalado. Si el plugin no
-  esta en un checkout de git, o tiene cambios locales, la corrida se envia sin esas versiones.
+- El token se pide sin eco, o se lee de `AGENT_AUTOLEARN_TOKEN`. **Nunca** va en la línea de comandos.
+- Los perfiles se guardan en `~/.config/agent-autolearn/config.json` (permisos 600).
+- `--url` es la raíz de la instancia (si le pones `/v1` al final, se quita solo). Todos los perfiles pueden apuntar a la
+  misma URL: lo que cambia es el token.
+- Volver a ejecutar `configure` con el mismo nombre reemplaza la URL y el token (sirve para rotar un token revocado).
+- `--default` marca el perfil que usan los repos sin `.agent-autolearn.json`. Si no quieres que nada se envíe
+  por defecto, no marques ninguno.
+
+#### 3. Elige el workspace de cada repo
+
+```bash
+cd ~/code/repo-de-la-empresa && review-sync use empresa
+cd ~/code/mi-proyecto        && review-sync use personal
+```
+
+`use` escribe `.agent-autolearn.json` (`{"profile": "empresa"}`) en la raíz del repo. Puedes commitearlo para que todo
+el equipo envíe ese repo al mismo workspace: cada persona crea en su máquina un perfil con ese nombre y su propio token.
+Si prefieres no commitearlo, añádelo a `.git/info/exclude`.
+
+El perfil activo se decide en este orden:
+
+1. `AGENT_AUTOLEARN_PROFILE` (útil para una corrida puntual: `AGENT_AUTOLEARN_PROFILE=personal claude`).
+2. `.agent-autolearn.json` del repo.
+3. El perfil por defecto.
+4. Ninguno: la sincronización queda desactivada, sin error.
+
+#### 4. Comprueba que apunta donde crees
+
+```bash
+cd ~/code/repo-de-la-empresa && review-sync status
+```
+
+```text
+Perfil: empresa (.agent-autolearn.json del repo)
+API: https://agent-autolearn.josephluihs.workers.dev  token alt_Ab12…
+Workspace: <nombre del workspace> · como instalación:laptop-ana · permisos: ingest, read
+Cola: 0 pendientes · 3 enviadas · 0 con error
+```
+
+La línea **Workspace** la responde la API con ese token: es el workspace donde aparecerán las revisiones. En el panel,
+cambia a ese workspace para verlas.
+
+#### 5. Uso diario
+
+No hace falta nada: `/pre-pr-review` encola y envía al terminar. Comandos para cuando lo necesites:
+
+```bash
+review-sync push                  # envía lo pendiente (p. ej. tras estar sin conexión)
+review-sync push --retry-failed   # reintenta lo que quedó con error, después de corregir la causa
+review-sync status --json         # detalle por corrida: estado, id en la API y motivo del error
+```
+
+#### Problemas frecuentes
+
+| Síntoma en `status` | Causa y solución |
+|---|---|
+| `Sincronizacion desactivada: no hay perfil activo` | El repo no tiene `.agent-autolearn.json` y no hay perfil por defecto. Ejecuta `review-sync use <perfil>`. |
+| `— NO configurado en este equipo` | El repo pide un perfil que no existe en tu máquina. Créalo con `configure` y el token de ese workspace. |
+| `Workspace: desconocido (… 401 …)` | Token revocado o mal copiado. Crea otro en el panel y vuelve a ejecutar `configure`. |
+| Corridas `sync_failed` con `404` | El token está limitado a otros repositorios de ese workspace. Amplíalo en el panel o crea otro token. |
+| Corridas `pending` | La API no respondió (red, 5xx). Se reintentan en el próximo `push` o en la próxima revisión. |
+| Nota «no registrados» o «no hay commit» | Las revisiones llegan, pero sin la versión exacta de las skills, y el análisis con IA necesita esa versión. Ver abajo. |
+
+**Versiones de skills y agentes.** Para que el panel pueda analizar y mejorar una skill, cada corrida registra el commit
+exacto de los archivos que se ejecutaron. Claude Code ejecuta el plugin desde una copia sin git
+(`~/.claude/plugins/cache/…`), así que el cliente busca el commit en el clon del marketplace
+(`~/.claude/plugins/marketplaces/agent-autolearn`) o en el clon que indiques con `AGENT_AUTOLEARN_PLUGIN_REPO`, y solo
+registra una versión si su contenido coincide byte a byte con lo que se ejecutó. Si editaste archivos del plugin a mano,
+esos componentes se envían sin versión en vez de declarar una falsa. Para evitarlo, actualiza el plugin con
+`/plugin update agent-autolearn@agent-autolearn`.
+
+#### Qué se envía y qué no
+
+- Se envían los hallazgos curados, la cobertura, el veredicto, el consumo de tokens por agente y las versiones usadas.
+  El repositorio se identifica por su remoto `origin` sin credenciales (nunca por la ruta local).
+- Antes de encolar se redactan claves y tokens, se omite la evidencia de archivos `.env`/`.pem`/`.key` y se recorta
+  cada texto a 4000 caracteres. Nunca se envían patches ni transcripts.
+- La cola y el progreso viven en `.pre-pr-review/sync/`, que nunca se commitea. Reenviar no duplica corridas ni tokens:
+  cada paso lleva una `Idempotency-Key` estable. Los fallos temporales quedan `pending`; los de esquema o permisos quedan
+  `sync_failed` con su motivo y no se reintentan solos.
 
 ## Publicar un cambio
 

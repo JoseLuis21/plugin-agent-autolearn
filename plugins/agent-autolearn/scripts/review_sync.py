@@ -309,32 +309,82 @@ def plugin_components(completed_reviewers):
     return comps
 
 
-def component_versions(completed_reviewers):
-    """(lista de versiones, motivo si no se pueden registrar)."""
-    root = Path(os.environ.get('CLAUDE_PLUGIN_ROOT') or PLUGIN_ROOT_DEFAULT).resolve()
+def plugin_git_source(root):
+    """(raiz del checkout, prefijo del plugin dentro del repo) o (None, motivo).
+
+    Claude Code ejecuta los plugins instalados desde ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/,
+    que no es un checkout de git. En ese caso se usa, por orden: AGENT_AUTOLEARN_PLUGIN_REPO (un clon del repo
+    del plugin) o el clon del marketplace en ~/.claude/plugins/marketplaces/<marketplace>/.
+    """
     top = git(root, 'rev-parse', '--show-toplevel')
-    commit = git(root, 'rev-parse', 'HEAD') if top else None
-    if not top or not commit or not re.fullmatch(r'[0-9a-f]{40,64}', commit):
-        return [], 'El plugin no esta en un checkout de git: no hay commit que registrar para sus versiones.'
-    top = Path(top).resolve()
-    prefix = root.relative_to(top).as_posix() if root != top else ''
+    if top:
+        top = Path(top).resolve()
+        return top, (root.relative_to(top).as_posix() if root != top else '')
+    candidates = []
+    if os.environ.get('AGENT_AUTOLEARN_PLUGIN_REPO'):
+        candidates.append(Path(os.environ['AGENT_AUTOLEARN_PLUGIN_REPO']).expanduser())
+    if root.parent.parent.parent.name == 'cache':
+        candidates.append(root.parent.parent.parent.parent / 'marketplaces' / root.parent.parent.name)
+    plugin_name = (read_json(root / '.claude-plugin' / 'plugin.json', {}) or {}).get('name') or root.parent.name
+    for cand in candidates:
+        ctop = git(cand, 'rev-parse', '--show-toplevel')
+        if not ctop:
+            continue
+        ctop = Path(ctop).resolve()
+        market = read_json(ctop / '.claude-plugin' / 'marketplace.json', {}) or {}
+        source = next((p.get('source') for p in market.get('plugins', []) if p.get('name') == plugin_name), None)
+        prefix = source.strip('./').rstrip('/') if isinstance(source, str) else ''
+        if (ctop / prefix / '.claude-plugin' / 'plugin.json').is_file():
+            return ctop, prefix
+    return None, ('El plugin instalado no esta en un checkout de git y no se encontro un clon del repo del plugin '
+                  '(define AGENT_AUTOLEARN_PLUGIN_REPO): no hay commit que registrar para sus versiones.')
+
+
+def matching_commit(top, repo_paths, files, depth=200):
+    """Commit mas reciente (desde HEAD) donde TODAS las rutas tienen exactamente el contenido usado."""
+    want = {}
+    for repo_path, f in zip(repo_paths, files):
+        blob = subprocess.run(['git', '-C', str(top), 'hash-object', '--no-filters', str(f)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        if blob.returncode != 0:
+            return None
+        want[repo_path] = blob.stdout.decode().strip()
+    log = git(top, 'log', f'-n{depth}', '--format=%H', 'HEAD', '--', *repo_paths)
+    for commit in (log or '').split():
+        tree = git(top, 'ls-tree', commit, '--', *repo_paths) or ''
+        have = {line.split('\t', 1)[1]: line.split()[2] for line in tree.splitlines() if '\t' in line}
+        if have == want:
+            return commit
+    return None
+
+
+def component_versions(completed_reviewers):
+    """(lista de versiones, motivo si alguna no se puede registrar).
+
+    La version registrada es el commit cuyo contenido coincide byte a byte con los archivos que realmente se
+    usaron; la API verifica ese mismo hash contra el commit. Si no hay coincidencia (cambios locales, clon
+    desactualizado), ese componente no se registra en lugar de declarar una version falsa.
+    """
+    root = Path(os.environ.get('CLAUDE_PLUGIN_ROOT') or PLUGIN_ROOT_DEFAULT).resolve()
+    top, prefix_or_reason = plugin_git_source(root)
+    if top is None:
+        return [], prefix_or_reason
+    prefix = prefix_or_reason
     manifest = read_json(root / '.claude-plugin' / 'plugin.json', {}) or {}
     versions, skipped = [], []
     for kind, name, rel_paths in plugin_components(completed_reviewers):
-        paths = [f'{prefix}/{p}' if prefix else p for p in rel_paths]
-        existing = [(repo_path, root / rel) for repo_path, rel in zip(paths, rel_paths) if (root / rel).is_file()]
+        existing = [(f'{prefix}/{rel}' if prefix else rel, root / rel) for rel in rel_paths if (root / rel).is_file()]
         if not existing:
             continue
         repo_paths = [p for p, _ in existing]
-        dirty = git(top, 'status', '--porcelain', '--', *repo_paths)
-        if dirty:
-            # El contenido usado no coincide con el commit: registrarlo romperia la verificacion del hash.
+        commit = matching_commit(top, repo_paths, [f for _, f in existing])
+        if not commit:
             skipped.append(f'{kind}:{name}')
             continue
         versions.append({'type': kind, 'name': name, 'commit': commit,
                          'content_hash': content_hash([(p, f.read_bytes()) for p, f in existing]),
                          'plugin_version': manifest.get('version'), 'paths': sorted(repo_paths)})
-    reason = f'Con cambios locales sin commitear, no registrados: {", ".join(skipped)}.' if skipped else None
+    reason = (f'Sin commit que coincida con el contenido usado (cambios locales o clon desactualizado), no registrados: '
+              f'{", ".join(skipped)}.') if skipped else None
     return versions, reason
 
 

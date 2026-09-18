@@ -132,7 +132,7 @@ class ReviewSyncTests(unittest.TestCase):
         self.url = f'http://127.0.0.1:{self.server.server_address[1]}'
         self.env_backup = dict(os.environ)
         self.addCleanup(lambda: (os.environ.clear(), os.environ.update(self.env_backup)))
-        for k in ('AGENT_AUTOLEARN_PROFILE', 'AGENT_AUTOLEARN_TOKEN', 'CLAUDE_PLUGIN_ROOT'):
+        for k in ('AGENT_AUTOLEARN_PROFILE', 'AGENT_AUTOLEARN_TOKEN', 'CLAUDE_PLUGIN_ROOT', 'AGENT_AUTOLEARN_PLUGIN_REPO'):
             os.environ.pop(k, None)
         os.environ['AGENT_AUTOLEARN_CONFIG'] = str(self.temp / 'cfg' / 'agent-autolearn' / 'config.json')
         os.environ['AGENT_AUTOLEARN_BACKOFF'] = '0'
@@ -142,9 +142,9 @@ class ReviewSyncTests(unittest.TestCase):
 
     # ---------- utilidades ----------
 
-    def plugin_checkout(self, with_git=True):
+    def plugin_checkout(self, with_git=True, name=None):
         """Copia del plugin en un repo propio y limpio, para que el commit y los hashes sean deterministas."""
-        top = self.temp / ('plugin-repo' if with_git else 'plugin-nogit')
+        top = self.temp / (name or ('plugin-repo' if with_git else 'plugin-nogit'))
         dest = top / 'plugins' / 'agent-autolearn'
         shutil.copytree(PLUGIN, dest, ignore=shutil.ignore_patterns('__pycache__', 'tests', 'evals'))
         if with_git:
@@ -350,11 +350,80 @@ class ReviewSyncTests(unittest.TestCase):
         repo, run = self.finalized_run()
         result = review_sync.enqueue(run['run_dir'])
         self.assertEqual(result['component_versions'], 0)
-        self.assertIn('checkout de git', result['component_versions_note'])
+        self.assertIn('checkout de git', result['component_versions_note'])  # y sin clon del marketplace
         state = self.push(repo)
         self.assertEqual(state['runs'][result['client_run_id']]['state'], 'sent')
         self.assertEqual(next(iter(self.api.runs.values()))['body']['component_version_ids'], [])
         self.assertEqual(self.api.created('versions'), 0)
+
+    def installed_from_marketplace(self, edit_head=None):
+        """Reproduce la instalacion real de Claude Code: cache sin git + clon del marketplace con git."""
+        plugins = self.temp / 'claude-plugins'
+        clone_plugin = self.plugin_checkout(with_git=True, name='marketplace-clone')
+        clone_top = clone_plugin.parent.parent
+        shutil.copytree(PLUGIN.parent.parent / '.claude-plugin', clone_top / '.claude-plugin')
+        env = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_AUTHOR_NAME': 't',
+               'GIT_AUTHOR_EMAIL': 't@example.invalid', 'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@example.invalid'}
+        g = lambda *a: subprocess.run(['git', '-C', str(clone_top), *a], env=env, check=True, stdout=subprocess.PIPE).stdout.decode().strip()
+        g('add', '.'); g('commit', '-q', '--no-gpg-sign', '-m', 'marketplace')
+        installed_commit = g('rev-parse', 'HEAD')
+        market = plugins / 'marketplaces' / 'agent-autolearn'
+        market.parent.mkdir(parents=True)
+        shutil.move(str(clone_top), market)
+        cache = plugins / 'cache' / 'agent-autolearn' / 'agent-autolearn' / '9.9.9'
+        shutil.copytree(market / 'plugins' / 'agent-autolearn', cache)
+        if edit_head:  # el marketplace avanzo despues de instalar: HEAD ya no coincide con la cache
+            target = market / 'plugins' / 'agent-autolearn' / edit_head
+            target.write_text(target.read_text() + '\ncambio posterior\n')
+            subprocess.run(['git', '-C', str(market), 'commit', '-qam', 'posterior', '--no-gpg-sign'], env=env, check=True, stdout=subprocess.DEVNULL)
+        return cache, installed_commit
+
+    def test_installed_plugin_registers_versions_from_marketplace_clone(self):
+        cache, installed_commit = self.installed_from_marketplace(edit_head='agents/code-reviewer.md')
+        os.environ['CLAUDE_PLUGIN_ROOT'] = str(cache)
+        self.configure()
+        repo, run = self.finalized_run()
+        result = review_sync.enqueue(run['run_dir'])
+        self.assertGreater(result['component_versions'], 0, result['component_versions_note'])
+        item = json.loads((repo.root / '.pre-pr-review' / 'sync' / 'queue' / f"{result['client_run_id']}.json").read_text())
+        by_name = {c['name']: c for c in item['component_versions']}
+        # El revisor cambio en HEAD despues de instalar: se registra un commit cuyo contenido es el que se ejecuto.
+        market = cache.parent.parent.parent.parent / 'marketplaces' / 'agent-autolearn'
+        head = subprocess.run(['git', '-C', str(market), 'rev-parse', 'HEAD'], stdout=subprocess.PIPE, check=True).stdout.decode().strip()
+        commit = by_name['code-reviewer']['commit']
+        self.assertNotEqual(commit, head)
+        shown = subprocess.run(['git', '-C', str(market), 'show', f'{commit}:plugins/agent-autolearn/agents/code-reviewer.md'], stdout=subprocess.PIPE, check=True).stdout
+        self.assertEqual(shown, (cache / 'agents' / 'code-reviewer.md').read_bytes())
+        for c in item['component_versions']:  # toda version registrada apunta a un commit con el contenido exacto usado
+            for path in c['paths']:
+                blob = subprocess.run(['git', '-C', str(market), 'show', f"{c['commit']}:{path}"], stdout=subprocess.PIPE, check=True).stdout
+                self.assertEqual(blob, (cache / path.removeprefix('plugins/agent-autolearn/')).read_bytes(), path)
+        self.assertTrue(installed_commit)
+        self.assertTrue(all(p.startswith('plugins/agent-autolearn/') for c in item['component_versions'] for p in c['paths']))
+        self.assertIsNone(result['component_versions_note'])
+
+    def test_explicit_plugin_repo_env_and_local_edits_are_not_registered(self):
+        # Copia instalada fuera de la estructura de cache: solo AGENT_AUTOLEARN_PLUGIN_REPO permite encontrar el clon.
+        clone = self.plugin_checkout(with_git=True, name='clon-explicito').parent.parent
+        shutil.copytree(PLUGIN.parent.parent / '.claude-plugin', clone / '.claude-plugin')
+        env = {**os.environ, 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_AUTHOR_NAME': 't',
+               'GIT_AUTHOR_EMAIL': 't@example.invalid', 'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@example.invalid'}
+        for a in (['add', '.'], ['commit', '-q', '--no-gpg-sign', '-m', 'm']):
+            subprocess.run(['git', '-C', str(clone), *a], env=env, check=True, stdout=subprocess.DEVNULL)
+        cache = self.temp / 'otra-instalacion' / 'agent-autolearn'
+        shutil.copytree(clone / 'plugins' / 'agent-autolearn', cache)
+        os.environ['CLAUDE_PLUGIN_ROOT'] = str(cache)
+        self.configure()
+        repo, run = self.finalized_run()
+        self.assertIn('AGENT_AUTOLEARN_PLUGIN_REPO', review_sync.enqueue(run['run_dir'])['component_versions_note'])
+        os.environ['AGENT_AUTOLEARN_PLUGIN_REPO'] = str(clone)
+        (cache / 'agents' / 'code-reviewer.md').write_text('editado a mano en la cache\n')
+        repo, run = self.finalized_run()
+        result = review_sync.enqueue(run['run_dir'])
+        self.assertIn('reviewer:code-reviewer', result['component_versions_note'])
+        self.assertGreater(result['component_versions'], 0)
+        item = json.loads((repo.root / '.pre-pr-review' / 'sync' / 'queue' / f"{result['client_run_id']}.json").read_text())
+        self.assertNotIn('code-reviewer', {c['name'] for c in item['component_versions']})
 
     def test_previous_pass_is_linked_by_local_uuid(self):
         self.configure()
