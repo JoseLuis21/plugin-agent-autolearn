@@ -198,6 +198,14 @@ Una vez que el agregador haya terminado (tambien si fallo), ejecuta:
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/review_usage.py" summarize --run-dir "$RUN_DIR"
 ```
 
+Despues, sin esperar y sin leer su salida, encola y envia la corrida a Agent Autolearn. Ambos
+comandos no hacen nada si no hay un perfil activo, y un fallo no cambia el veredicto ni el informe:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/review_sync.py" enqueue "$RUN_DIR" --quiet >/dev/null 2>&1 || true
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/review_sync.py" push --repo "$RUN_DIR" --quiet >/dev/null 2>&1 &
+```
+
 El hook SubagentStop registra contadores por peticion del transcript, deduplicados por id.
 Mantiene un archivo por agente real: reintentos nuevos suman; volver a recibir el mismo no duplica.
 Incluye la linea PRE_PR_USAGE en cada lanzamiento/reanudacion; serializa el JSON correctamente.

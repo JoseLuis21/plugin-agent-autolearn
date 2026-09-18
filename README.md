@@ -192,6 +192,7 @@ plugins/agent-autolearn/
   scripts/shared_checks.py             validacion por script de los hechos de build/tests
   scripts/review_usage.py              tokens por corrida, orquestador estimado y comparacion
   scripts/retention.py                 limpieza de corridas y snapshots antiguos
+  scripts/review_sync.py               sincronizacion opcional con una API Agent Autolearn (perfiles)
   scripts/eval_review.py               evaluaciones con bugs sembrados (evals/)
   agents/                              los 8 revisores + el agregador
 ```
@@ -345,11 +346,49 @@ No equivale a una factura: la salida registrada puede ser provisional segun runt
 precios ni se usa `total_tokens` de la ultima peticion como consumo acumulado. Detalles y comando
 manual: `plugins/agent-autolearn/skills/pre-pr-review/references/token-usage.md`.
 
+### Sincronizar con Agent Autolearn (opcional)
+
+Cada corrida puede enviarse a una API Agent Autolearn para ver estadisticas, dar feedback y pedir
+mejoras de las skills desde el panel. Es opcional: sin perfil activo no se envia nada, y un fallo de
+red o de la API nunca cambia el veredicto ni bloquea la revision. Al finalizar, el orquestador encola
+la corrida (sin red) y lanza el envio en segundo plano.
+
+Un **perfil** es una URL de API mas un token de instalacion. El token decide el workspace de destino,
+asi que con dos perfiles puedes mandar unos repos a un workspace y otros a otro:
+
+```bash
+S="$HOME/.claude/plugins/marketplaces/agent-autolearn/plugins/agent-autolearn/scripts/review_sync.py"
+# el token se pide sin eco (o se lee de AGENT_AUTOLEARN_TOKEN); nunca va en la linea de comandos
+python3 "$S" configure --profile personal --url https://tu-api.example.dev --default
+python3 "$S" configure --profile empresa  --url https://tu-api.example.dev
+
+cd ~/code/repo-de-la-empresa && python3 "$S" use empresa     # escribe .agent-autolearn.json
+cd ~/code/mi-proyecto        && python3 "$S" use personal
+
+python3 "$S" profiles        # perfiles con el prefijo del token, nunca el token completo
+python3 "$S" status          # perfil activo, workspace segun la API y estado de la cola
+python3 "$S" push            # reintenta lo pendiente; --retry-failed para los que fallaron
+```
+
+- Los tokens viven en `~/.config/agent-autolearn/config.json` (permisos 600). `.agent-autolearn.json`
+  solo contiene el nombre del perfil: puede commitearse para que todo el equipo use el mismo workspace
+  en ese repo.
+- Perfil activo, en este orden: `AGENT_AUTOLEARN_PROFILE`, `.agent-autolearn.json` del repo, perfil por
+  defecto. Si ninguno aplica, la sincronizacion queda desactivada.
+- La cola y el progreso viven en `.pre-pr-review/sync/`, que nunca se commitea. Reenviar no duplica
+  corridas ni tokens: cada paso lleva una `Idempotency-Key` estable. Los fallos temporales quedan
+  `pending`; los de esquema o permisos quedan `sync_failed` con su motivo y no se reintentan solos.
+- Antes de encolar se redactan claves y tokens, se omite la evidencia de archivos `.env`/`.pem`/`.key`
+  y se recorta cada texto a 4000 caracteres. Nunca se envian patches, transcripts ni la ruta local:
+  el repo se identifica por su remoto `origin` sin credenciales.
+- Las versiones de skills y agentes se registran con el commit del plugin instalado. Si el plugin no
+  esta en un checkout de git, o tiene cambios locales, la corrida se envia sin esas versiones.
+
 ## Publicar un cambio
 
 1. Sube `version` en los **dos** JSON: `plugins/agent-autolearn/.claude-plugin/plugin.json` y
    `.claude-plugin/marketplace.json`. Si no, el equipo no ve el cambio.
-2. Commit y push a `development`.
+2. Commit y push a `main`.
 3. Cada dev: `/plugin update agent-autolearn@agent-autolearn` (requiere reiniciar Claude Code para aplicar).
 
 Si el cambio toca solo el contenido de una skill o un agente, con eso basta. Si añade o quita
