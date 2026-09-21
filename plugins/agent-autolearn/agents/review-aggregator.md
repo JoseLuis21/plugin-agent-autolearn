@@ -64,7 +64,7 @@ Los reincidentes llevan etiqueta neutral, sin inferir un intento fallido del aut
 ## Paso 3 — Finalizar y calcular el veredicto
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.py" \
+sh "${CLAUDE_PLUGIN_ROOT}/scripts/py.sh" ledger.py \
   --run-dir "$RUN_DIR" --curated "$RUN_DIR/curated.json" --summary
 ```
 

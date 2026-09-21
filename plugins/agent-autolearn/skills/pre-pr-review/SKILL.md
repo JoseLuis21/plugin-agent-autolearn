@@ -39,7 +39,7 @@ No añadas `--full` por estar cerca de abrir el PR ni porque exista un informe p
 usalo solo cuando el usuario pida expresamente una revision completa.
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/prepare_review.py" --repo "$ROOT"
+sh "${CLAUDE_PLUGIN_ROOT}/scripts/py.sh" prepare_review.py --repo "$ROOT"
 # Añade --full para validar toda la rama, o --verify-pending para revalidar sin delta.
 ```
 
@@ -116,7 +116,7 @@ normal y publica los hechos de build/tests en `shared-checks.json` segun
 auditoria. Al terminar, valida lo publicado sin ejecutar nada ni gastar tokens:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/shared_checks.py" --run-dir "$RUN_DIR"
+sh "${CLAUDE_PLUGIN_ROOT}/scripts/py.sh" shared_checks.py --run-dir "$RUN_DIR"
 ```
 
 El resultado queda en `shared-checks.json.validation`; con exit 1 los hechos son contradictorios
@@ -195,15 +195,15 @@ entre pasadas y sale del conteo accionable, pero sigue visible en el informe.
 Una vez que el agregador haya terminado (tambien si fallo), ejecuta:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/review_usage.py" summarize --run-dir "$RUN_DIR"
+sh "${CLAUDE_PLUGIN_ROOT}/scripts/py.sh" review_usage.py summarize --run-dir "$RUN_DIR"
 ```
 
 Despues, sin esperar y sin leer su salida, encola y envia la corrida a Agent Autolearn. Ambos
 comandos no hacen nada si no hay un perfil activo, y un fallo no cambia el veredicto ni el informe:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/review_sync.py" enqueue "$RUN_DIR" --quiet >/dev/null 2>&1 || true
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/review_sync.py" push --repo "$RUN_DIR" --quiet >/dev/null 2>&1 &
+sh "${CLAUDE_PLUGIN_ROOT}/scripts/py.sh" review_sync.py enqueue "$RUN_DIR" --quiet >/dev/null 2>&1 || true
+sh "${CLAUDE_PLUGIN_ROOT}/scripts/py.sh" review_sync.py push --repo "$RUN_DIR" --quiet >/dev/null 2>&1 &
 ```
 
 El hook SubagentStop registra contadores por peticion del transcript, deduplicados por id.

@@ -404,6 +404,30 @@ cd ~/code/otro-repo && review-sync use personal     # una vez por repo
 Si `review-sync` no existe todavía, abre una terminal nueva (el alias se carga al iniciarla). Comprueba con el paso 4.
 Los pasos 2b y 3 explican lo mismo por partes.
 
+#### 2 (Windows). Configuración rápida en PowerShell
+
+Claude Code en Windows ejecuta los comandos del plugin con Git Bash, y el plugin busca Python 3.9+ como `python3`,
+`python` o `py -3` (`scripts/py.sh`), así que el instalador de [python.org](https://www.python.org/downloads/) basta.
+Requisitos: **Git for Windows** (incluye Git Bash) y **Python 3.9+**. El alias `python3` de la Microsoft Store no
+cuenta: si al escribir `python` se abre la Store, desactívalo en *Configuración → Aplicaciones → Alias de ejecución*.
+
+Desde la raíz del repo, en PowerShell:
+
+```powershell
+py -3 "$HOME\.claude\plugins\marketplaces\agent-autolearn\plugins\agent-autolearn\scripts\review_sync.py" setup personal
+```
+
+Hace lo mismo que en macOS/Linux, pero el atajo `review-sync` se crea como función en tu perfil de PowerShell
+(`$PROFILE.CurrentUserAllHosts`). Abre una PowerShell nueva para usarlo. Si PowerShell dice que la ejecución de
+scripts está deshabilitada, permite los scripts locales una vez:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Si lo ejecutas desde Git Bash, el alias va a `~/.bashrc` como en Linux. El resto de la guía es igual; en PowerShell,
+para una sola corrida con otro perfil usa `$env:AGENT_AUTOLEARN_PROFILE = "otro"; claude`.
+
 #### 2b. Configuración manual
 
 ```bash
@@ -477,6 +501,7 @@ review-sync status --json         # detalle por corrida: estado, id en la API y 
 | `— NO configurado en este equipo` | El repo pide un perfil que no existe en tu máquina. Créalo con `configure` y el token de ese workspace. |
 | `Workspace: desconocido (… 401 …)` | Token revocado o mal copiado. Crea otro en el panel y vuelve a ejecutar `configure`. |
 | Corridas `sync_failed` con `404` | El token está limitado a otros repositorios de ese workspace. Amplíalo en el panel o crea otro token. |
+| `no se encontro Python 3.9+` (Windows) | Instala Python desde python.org y abre una terminal nueva. Si `python` abre la Microsoft Store, desactiva ese alias de ejecución. |
 | Corridas `pending` | La API no respondió (red, 5xx). Se reintentan en el próximo `push` o en la próxima revisión. |
 | Nota «no registrados» o «no hay commit» | Las revisiones llegan, pero sin la versión exacta de las skills, y el análisis con IA necesita esa versión. Ver abajo. |
 

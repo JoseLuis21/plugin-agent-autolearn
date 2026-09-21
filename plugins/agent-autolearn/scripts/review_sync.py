@@ -26,6 +26,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -922,6 +923,44 @@ def stable_script_path():
     return marketplace if marketplace.is_file() else here
 
 
+def is_windows():
+    return os.name == 'nt'
+
+
+def python_cmd():
+    """python3 en macOS/Linux; en Windows el interprete actual, porque python3 no suele existir."""
+    return f'"{Path(sys.executable).as_posix()}"' if is_windows() else 'python3'
+
+
+def powershell_profile():
+    """Perfil de PowerShell del usuario (todas las consolas). Respeta Documentos redirigido a OneDrive."""
+    for exe in ('pwsh', 'powershell'):
+        path = shutil.which(exe)
+        if not path:
+            continue
+        out = subprocess.run([path, '-NoProfile', '-NonInteractive', '-Command', '$PROFILE.CurrentUserAllHosts'],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
+        value = out.stdout.decode('utf-8', errors='replace').strip()
+        if out.returncode == 0 and value:
+            return Path(value)
+    return None
+
+
+def install_powershell_function():
+    profile = powershell_profile()
+    if not profile:
+        return None, None
+    current = profile.read_text(encoding='utf-8-sig') if profile.exists() else ''
+    if re.search(r'^\s*function\s+review-sync\b', current, re.M | re.I):
+        return profile, 'present'
+    profile.parent.mkdir(parents=True, exist_ok=True)
+    sep = '' if not current or current.endswith('\n') else '\n'
+    with profile.open('a', encoding='utf-8') as fh:
+        fh.write(f"{sep}# agent-autolearn: cliente de sincronizacion\n"
+                 f"function review-sync {{ & '{sys.executable}' '{stable_script_path()}' @args }}\n")
+    return profile, 'added'
+
+
 def shell_rc():
     shell = Path(os.environ.get('SHELL') or '').name
     if shell == 'zsh':
@@ -931,17 +970,23 @@ def shell_rc():
     return None
 
 
+def alias_line():
+    if is_windows():  # Git Bash: rutas con / y el interprete actual entre comillas
+        return f"alias review-sync='{python_cmd()} \"{Path(stable_script_path()).as_posix()}\"'"
+    return f'alias review-sync="python3 {stable_script_path()}"'
+
+
 def install_alias():
-    """(rc, estado) con estado 'added' | 'present' | None si la shell no es zsh ni bash."""
+    """(rc, estado) con estado 'added' | 'present' | None si no hay zsh, bash ni PowerShell (Windows)."""
     rc = shell_rc()
     if not rc:
-        return None, None
+        return install_powershell_function() if is_windows() else (None, None)
     current = rc.read_text(encoding='utf-8') if rc.exists() else ''
     if re.search(r'^\s*alias review-sync=', current, re.M):
         return rc, 'present'
     sep = '' if not current or current.endswith('\n') else '\n'
     with rc.open('a', encoding='utf-8') as fh:
-        fh.write(f'{sep}# agent-autolearn: cliente de sincronizacion\nalias review-sync="python3 {stable_script_path()}"\n')
+        fh.write(f'{sep}# agent-autolearn: cliente de sincronizacion\n{alias_line()}\n')
     return rc, 'added'
 
 
@@ -976,9 +1021,15 @@ def cmd_setup(args):
     if not args.no_alias:
         rc, alias_state = install_alias()
         if alias_state == 'added':
-            print(f'✓ Alias review-sync añadido a {rc}. Abre una terminal nueva o ejecuta: source {rc}')
+            if rc.suffix == '.ps1':
+                print(f'✓ Funcion review-sync añadida a {rc}. Abre una PowerShell nueva. Si dice que la ejecucion de scripts '
+                      'esta deshabilitada: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned')
+            else:
+                print(f'✓ Alias review-sync añadido a {rc}. Abre una terminal nueva o ejecuta: source {rc}')
         elif alias_state is None:
-            print(f'· Shell no reconocida; alias manual: alias review-sync="python3 {stable_script_path()}"')
+            manual = (f"function review-sync {{ & '{sys.executable}' '{stable_script_path()}' @args }}"
+                      if is_windows() else alias_line())
+            print(f'· Shell no reconocida; añadelo a mano: {manual}')
 
 
 def cmd_profiles(_args):

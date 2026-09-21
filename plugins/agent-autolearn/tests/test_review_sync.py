@@ -249,6 +249,25 @@ class ReviewSyncTests(unittest.TestCase):
         self.assertEqual(self.setup_cmd('--no-repo')[0], 0)  # Repetirlo no duplica el alias.
         self.assertEqual(rc.read_text().count('alias review-sync='), 1)
 
+    def test_windows_without_bash_installs_a_powershell_function_once(self):
+        from unittest import mock
+        profile = self.temp / 'Documents' / 'PowerShell' / 'profile.ps1'
+        with mock.patch.dict(os.environ, {'SHELL': ''}), mock.patch.object(review_sync, 'is_windows', return_value=True), \
+                mock.patch.object(review_sync, 'powershell_profile', return_value=profile):
+            self.assertEqual(review_sync.install_alias(), (profile, 'added'))
+            self.assertEqual(review_sync.install_alias(), (profile, 'present'))
+        text = profile.read_text()
+        self.assertEqual(text.count('function review-sync'), 1)
+        self.assertIn(f"& '{sys.executable}'", text)
+        self.assertIn('@args', text)
+
+    def test_git_bash_on_windows_uses_the_current_interpreter(self):
+        from unittest import mock
+        with mock.patch.object(review_sync, 'is_windows', return_value=True):
+            line = review_sync.alias_line()
+        self.assertTrue(line.startswith(f"alias review-sync='\"{Path(sys.executable).as_posix()}\" "), line)
+        self.assertNotIn('\\', line)
+
     def test_setup_with_rejected_token_saves_nothing(self):
         repo = ReviewRepo(self, self.temp / 'repo-bad')
         code, out = self.setup_cmd('empresa', '--default', token='alt_' + 'z' * 40, cwd_repo=repo.root)

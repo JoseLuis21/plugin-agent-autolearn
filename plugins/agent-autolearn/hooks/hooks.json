@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "PYTHONDONTWRITEBYTECODE=1 python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/review_usage.py\" hook",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/py.sh\" review_usage.py hook",
             "timeout": 15
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "PYTHONDONTWRITEBYTECODE=1 python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/review_usage.py\" hook",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/py.sh\" review_usage.py hook",
             "timeout": 15
           }
         ]
