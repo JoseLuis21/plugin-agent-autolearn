@@ -44,6 +44,10 @@ Cada corrida tiene un directorio unico, con:
 - `patch-index.json`: rango de lineas, tipo y estado de cada archivo dentro de `new.patch`, para leer un patch
   grande en un turno; `patches/<reviewer>.patch`: recorte sin archivos fuera del stack, solo para los
   revisores de arquitectura. `new.patch` sigue completo y es el unico insumo del resto.
+- `aggregate-context.md` y `curated.draft.json`: los escribe `aggregate_context.py` para el agregador. El primero
+  reune en un archivo todo lo que el agregador carga siempre, con la huella de cada hallazgo y el esquema exacto
+  de la curacion; el segundo guarda los campos originales por huella cruda para reutilizarlos por codigo, con
+  `validated: false`. Ninguno decide nada ni es entrada de `ledger.py`.
 - La salida del helper incluye `conversation_context` (`tokens`, `level` ok/note/ask, `warning`) o null.
   No forma parte de `run.json` ni de la identidad de la corrida: reanudar desde otra sesion la reutiliza.
 - `pending/<reviewer>.json`: hallazgos activos asignados con evidencia/fix/estado previos.

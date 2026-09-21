@@ -203,5 +203,73 @@ class FinishTests(unittest.TestCase):
         self.assertEqual(review_usage.profile([{'requests': 1}]), {k: None for k in review_usage.PROFILE}, 'archivos antiguos: desconocido')
 
 
+class AggregateContextTests(unittest.TestCase):
+    def build(self, run_dir, expected=0):
+        result = subprocess.run([sys.executable, '-B', str(SCRIPTS / 'aggregate_context.py'), '--run-dir', str(run_dir)],
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, expected, result.stderr)
+        return json.loads(result.stdout) if expected == 0 else result.stderr
+
+    def test_one_file_carries_the_run_and_a_curation_built_from_it_passes_the_ledger(self):
+        from test_review_state import finding, fingerprint
+        with tempfile.TemporaryDirectory(prefix='review-cost-') as temp:
+            repo = ReviewRepo(self, Path(temp) / 'repo')
+            repo.write('app.py', 'value = 1\n')
+            first = repo.prepare()
+            repo.complete(first, raw={'code-reviewer': [finding('carried')]})
+            repo.write('app.py', 'async def fetch():\n    return 2\n')
+            run = repo.prepare()
+            run_dir = Path(run['run_dir'])
+            long_why = 'La entrada vacia rompe el indice. ' * 120
+            shared = finding('parse', severity='HIGH', why=long_why)
+            repo.results(run, raw={'code-reviewer': [shared, finding('other')],
+                                   'edge-case-reviewer': [dict(shared, severity='MEDIUM')]})
+            (run_dir / 'curated.json').unlink()
+            packet = self.build(run_dir)
+            text = Path(packet['context']).read_text()
+            self.assertLessEqual(max(len(line) for line in text.splitlines()), 400, 'el lector trunca lineas muy largas')
+            covered = [(r['offset'], r['offset'] + r['limit'] - 1) for r in packet['read_in_one_turn']]
+            self.assertEqual(covered[0][0], 1)
+            self.assertEqual(covered[-1][1], packet['lines'])
+            self.assertTrue(all(b[0] == a[1] + 1 for a, b in zip(covered, covered[1:])), 'rangos contiguos, sin huecos')
+            for expected in (fingerprint(shared), fingerprint(finding('other')), 'code-reviewer, edge-case-reviewer',
+                             'Esquema exacto de curated.json', 'Pendientes asignados', fingerprint(finding('carried')),
+                             'dueño code-reviewer', 'findings-contract.md'):
+                self.assertIn(expected, text)
+            self.assertEqual(packet['raw_fingerprints'], 2)
+            self.assertEqual(packet['assigned_verifications'], 1)
+            self.assertEqual(packet['coverage_problems'], [])
+
+            draft = ReviewRepo.read_json(packet['draft'])
+            self.assertIs(draft['validated'], False)
+            repo.write_json(run_dir / 'curated.json', {k: draft[k] for k in ('schema_version', 'validated')} | {
+                'findings': [], 'verifications': draft['verifications']})
+            repo.assert_rejected(run)  # El borrador, tal cual, nunca finaliza una corrida.
+
+            # Lo que hace el agregador: decide, y reutiliza por codigo los campos originales.
+            decisions = []
+            for fp, sources in draft['by_fingerprint'].items():
+                base = max(sources, key=lambda f: ['NIT', 'LOW', 'MEDIUM', 'HIGH', 'BLOCKER'].index(f['severity']))
+                self.assertEqual(base['why'], long_why if fp == fingerprint(shared) else base['why'], 'texto original intacto')
+                decisions.append(dict(base, status='open', sources=[fp], detectado_por=[f['reviewer'] for f in sources]))
+            repo.write_json(run_dir / 'curated.json', {'schema_version': 2, 'validated': True, 'findings': decisions,
+                                                       'verifications': draft['verifications']})
+            result = repo.finalize(run)
+            self.assertTrue(result['resumen']['coverage_complete'])
+
+    def test_missing_results_are_reported_and_a_broken_run_never_crashes_the_agent(self):
+        with tempfile.TemporaryDirectory(prefix='review-cost-') as temp:
+            repo = ReviewRepo(self, Path(temp) / 'repo')
+            repo.write('app.py', 'value = 1\n')
+            run = repo.prepare()
+            repo.results(run)
+            Path(run['run_dir'], 'security-reviewer.json').unlink()
+            packet = self.build(run['run_dir'])
+            self.assertTrue(any('security-reviewer' in p for p in packet['coverage_problems']))
+            self.assertIn('COBERTURA INCOMPLETA', Path(packet['context']).read_text())
+            Path(run['run_dir'], 'run.json').write_text('{roto')
+            self.assertIn('aggregate_context.py:', self.build(run['run_dir'], expected=2))
+
+
 if __name__ == '__main__':
     unittest.main()

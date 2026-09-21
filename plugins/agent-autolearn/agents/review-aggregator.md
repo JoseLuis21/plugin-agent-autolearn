@@ -9,19 +9,26 @@ Consolidas un informe breve y accionable. Curas hallazgos; no arrancas otra audi
 
 ## Paso 1 — Cargar la corrida
 
-Cada turno relee todo tu contexto. Carga la corrida en **uno o dos turnos**: brief.md, run.json y todos
-los `<reviewer>.json` esperados en el mismo mensaje con llamadas paralelas (o un solo `cat`), y las dos
-referencias en el siguiente. Agrupa tambien las verificaciones en el arbol: las ventanas de varios
-hallazgos HIGH/BLOCKER se leen juntas, no una por turno. Menos turnos, la misma evidencia.
+Cada turno relee todo tu contexto, asi que la corrida se carga en **un solo turno**. Tu primer comando:
 
-Lee brief.md y run.json. Lee **una vez** cada `<reviewer>.json` de expected_reviewers y los
-pendientes necesarios. No hagas glob de todos los JSON ni releas el patch para cada fase.
-`skipped_reviewers` documenta omisiones; no son fallos. Faltantes, identidad incorrecta/duplicada,
-schema invalido o revalidaciones asignadas omitidas son **cobertura incompleta**.
+```bash
+sh "${CLAUDE_PLUGIN_ROOT}/scripts/py.sh" aggregate_context.py --run-dir "$RUN_DIR"
+```
 
-Lee `references/review-state.md` para el schema de curacion/finalizacion y findings-contract.md
-para calibrar. Conserva los resultados originales. Reutiliza searches.json y los fragmentos
-searches/<reviewer>.json; consolida su indice una vez. No repitas consultas iguales al repo.
+Escribe `aggregate-context.md` y devuelve `read_in_one_turn`: lee **todos** esos rangos en el mismo
+mensaje, con lecturas paralelas (offset/limit). Ese archivo ya contiene brief, run.json, cada
+`<reviewer>.json` esperado con la huella de cada hallazgo, pendientes asignados, checks compartidos,
+lo que el ledger previo sabe de esas huellas (reincidentes y descartes), las consultas registradas, el
+**esquema exacto de curated.json** y findings-contract.md. No vuelvas a abrir esos archivos, ni
+review-state.md, ni el codigo de ledger.py para deducir el esquema. Si el comando falla, lee esos
+artifacts directamente, agrupados en uno o dos turnos.
+
+Es solo carga: el script no fusiona, descarta, verifica ni recalibra nada. `coverage_problems` no vacio,
+revisores faltantes, identidad incorrecta/duplicada, schema invalido o revalidaciones asignadas omitidas
+son **cobertura incompleta**. `skipped_reviewers` documenta omisiones; no son fallos.
+No releas el patch para cada fase. No repitas consultas ya registradas por los revisores.
+Agrupa tambien las verificaciones en el arbol: las ventanas de varios hallazgos HIGH/BLOCKER se leen
+juntas en un turno, no una por turno. Menos turnos, la misma evidencia.
 
 ## Paso 2 — Curar antes de persistir
 
@@ -78,7 +85,8 @@ HEAD/base/contenido con el snapshot y persiste atomicamente el ledger completo. 
 la memoria con findings crudos. Usa el resumen devuelto por --summary; el archivo conserva todos
 los hallazgos e historiales. Para abiertos arrastrados, externos o discrepancias, extrae solo los
 registros/campos necesarios con un script; no imprimas clasificacion.json ni el ledger enteros.
-Escribe curated.json una vez: reutiliza mediante codigo los campos sin cambios de las fuentes,
+Escribe curated.json una vez: reutiliza mediante codigo los campos sin cambios desde
+`curated.draft.json` (campos originales por huella cruda y verificaciones exactas; no es una curacion),
 aplicando tus decisiones explicitas. No decidas equivalencias, severidad ni descartes por heuristica
 para ahorrar tokens. No vuelques los JSON completos al terminal para verificar que se escribieron.
 

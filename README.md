@@ -191,6 +191,7 @@ plugins/agent-autolearn/
   scripts/ledger.py                    validacion y persistencia final entre pasadas
   scripts/shared_checks.py             validacion por script de los hechos de build/tests
   scripts/review_usage.py              tokens por corrida, orquestador estimado y comparacion
+  scripts/aggregate_context.py         todo lo que carga el agregador, en un archivo y un turno
   scripts/retention.py                 limpieza de corridas y snapshots antiguos
   scripts/review_sync.py               sincronizacion opcional con una API Agent Autolearn (perfiles)
   scripts/eval_review.py               evaluaciones con bugs sembrados (evals/)
@@ -340,6 +341,10 @@ todo su contexto, asi que el coste de una corrida es, sobre todo, *turnos × con
   fuera de `_internal`/actions/route/layout/stores/schemas y sin cadenas cliente/servidor (el grafo se resuelve
   siempre). Una validacion completa nunca lo omite. Los revisores de stack leen un recorte sin tests ni otros
   lenguajes; el resto conserva el patch completo.
+- **Agregador cargado en un turno (2.17.0).** En una corrida real gasto 6 de sus 14 turnos abriendo archivos y
+  buscando el esquema de `curated.json` (llego a leer `ledger.py`). `aggregate_context.py` le entrega en un archivo
+  los resultados de todos los revisores con sus huellas, pendientes, lo que el ledger ya sabe de ellas, el esquema
+  exacto de la curacion y el contrato. Solo carga: verificar, fusionar, descartar y recalibrar siguen siendo suyos.
 - **Lo que no se toco, a proposito.** edge-case, regression y test siguen entrando en deltas pequeños: en las
   corridas medidas encontraron un HIGH y varios MEDIUM que code-reviewer no vio. El agregador sigue
   redactando: reescribe la mayor parte del porque y del fix al verificar en el arbol, no copia.
