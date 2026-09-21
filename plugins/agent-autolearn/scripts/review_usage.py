@@ -9,7 +9,9 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import os
 import re
+import subprocess
 import sys
 
 from ledger import atomic_json, read_json
@@ -148,6 +150,15 @@ def orchestrator_usage(path):
     return {run_dir: dict(usage_totals(group), closed=group['closed']) for run_dir, group in result.items()}
 
 
+def push_late_usage(repo):
+    """The orchestrator window closes after the skill already pushed: resend in background if sync is queued."""
+    if not any((repo / '.pre-pr-review' / 'sync' / 'queue').glob('*.json')):
+        return
+    subprocess.Popen([sys.executable, str(Path(__file__).resolve().parent / 'review_sync.py'), 'push', '--repo', str(repo), '--quiet'],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True, env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+
+
 def collect_orchestrator(event):
     path = Path(event['transcript_path'])
     if 'prepare_review.py' not in path.read_text(encoding='utf-8', errors='replace'):
@@ -157,6 +168,7 @@ def collect_orchestrator(event):
     if not isinstance(session, str) or not session:
         raise ValueError('Missing session identity')
     identity = 'orchestrator-' + hashlib.sha256(session.encode()).hexdigest()[:24]
+    written = False
     for directory, counters in orchestrator_usage(path).items():
         run_dir = Path(directory).resolve()
         if not run_dir.is_relative_to(repo / '.pre-pr-review'):
@@ -167,8 +179,11 @@ def collect_orchestrator(event):
         atomic_json(run_dir / 'usage' / f'{identity}.json', {
             'schema_version': 1, 'run_dir': str(run_dir), 'reviewer': 'orchestrator', 'agent_key': identity,
             'source': 'claude_main_transcript_window', 'estimated': True, **counters})
+        written = True
         if (run_dir / 'usage-summary.json').exists():
             summarize(run_dir)
+    if written:
+        push_late_usage(repo)
 
 
 def collect(event):

@@ -32,7 +32,7 @@ class FakeApi:
         self.requests = []
         self.fail = []  # [(method, fragmento de ruta, status, veces)]
         self.idem = {}
-        self.repos, self.versions, self.runs, self.usage = {}, {}, {}, {}
+        self.repos, self.versions, self.runs, self.usage, self.diagnostics = {}, {}, {}, {}, {}
         self.lock = threading.Lock()
 
     def created(self, kind):
@@ -89,6 +89,9 @@ class FakeApi:
                     return 412, {'error': {'code': 'precondition_failed', 'message': 'etag', 'request_id': 'r'}}, {}
                 run.update(result=body, result_hash=h, version=run['version'] + 1)
                 return 200, {'id': run['id']}, {'etag': f'"{run["version"]}"'}
+            if parts[4:] == ['diagnostics'] and method == 'PUT':
+                self.diagnostics[run['id']] = body
+                return 200, {'run_id': run['id']}, {}
             if parts[4] == 'usage' and method == 'PUT':
                 self.usage[(run['id'], parts[5])] = body
                 return 200, {'run_id': run['id']}, {}
@@ -346,6 +349,41 @@ class ReviewSyncTests(unittest.TestCase):
         self.push(repo)
         self.assertEqual(self.api.usage[('run_1', 'orchestrator-x')]['estimated'], True)
         self.assertEqual(self.api.runs['run_1']['version'], 2, 'la telemetria no reescribe el resultado')
+
+    def test_diagnostics_describe_patch_and_reviewers_without_content(self):
+        self.configure()
+        repo, run = self.finalized_run()
+        searches = Path(run['run_dir']) / 'searches'
+        searches.mkdir(exist_ok=True)
+        (searches / 'code-reviewer.json').write_text(json.dumps({'searches': [{'query': 'value', 'scope': 'app'}, {'query': ' '}]}))
+        review_sync.enqueue(run['run_dir'])
+        self.push(repo)
+        diag = self.api.diagnostics['run_1']
+        self.assertEqual(diag['schema_version'], 1)
+        self.assertTrue(diag['mode_reason'])
+        patch = diag['patch']
+        self.assertEqual([f['path'] for f in patch['files']], ['app.py'])
+        self.assertEqual((patch['files'][0]['added'], patch['files'][0]['kind']), (1, 'src'))
+        self.assertEqual(patch['bytes'], len((Path(run['run_dir']) / 'new.patch').read_bytes()))
+        self.assertNotIn('value = 1', json.dumps(diag), 'nunca se envia el contenido del patch')
+        code = next(r for r in diag['reviewers'] if r['reviewer'] == 'code-reviewer')
+        self.assertEqual(code['searches'], 1)
+        self.assertEqual(diag['searches'], {'distinct': 1, 'repeated': 0})
+        before = len(self.api.requests)
+        self.push(repo)
+        self.assertEqual(len(self.api.requests), before, 'un diagnostico sin cambios no se reenvia')
+
+    def test_diagnostics_backfill_already_sent_runs_and_tolerate_old_servers(self):
+        self.configure()
+        repo, run = self.finalized_run()
+        cid = review_sync.enqueue(run['run_dir'])['client_run_id']
+        self.api.fail.append(('PUT', '/diagnostics', 404, 1))
+        state = self.push(repo)
+        self.assertEqual(state['runs'][cid]['state'], 'sent', 'un servidor sin el endpoint no hace fallar el envio')
+        self.assertNotIn('run_1', self.api.diagnostics)
+        state = self.push(repo)
+        self.assertIn('run_1', self.api.diagnostics, 'la corrida ya enviada completa su diagnostico despues')
+        self.assertEqual(self.api.runs['run_1']['version'], 2, 'el diagnostico no reescribe el resultado')
 
     def test_transient_failure_stays_pending_then_sends(self):
         self.configure()

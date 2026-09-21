@@ -9,7 +9,7 @@
     {
       "name": "agent-autolearn",
       "description": "Skills que se usan al escribir codigo (arquitectura por stack, seguridad OWASP, tests, resiliencia, refactor seguro) y /pre-pr-review para revisar el diff antes de abrir el PR contra esas mismas leyes.",
-      "version": "2.13.2",
+      "version": "2.14.0",
       "author": {
         "name": "Jose Luis"
       },

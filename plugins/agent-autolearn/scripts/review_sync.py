@@ -418,6 +418,81 @@ def patch_size(run_dir, delta_files):
     return {'files_changed': len(delta_files or []), 'lines_changed': changed}
 
 
+MAX_PATCH_FILES = 300
+
+
+def file_kind(path):
+    lower = path.lower()
+    if re.search(r'(^|/)(tests?|__tests__|spec)/|[._-](test|spec)\.[a-z]+$|_test\.go$', lower):
+        return 'test'
+    if lower.endswith(('.md', '.mdx', '.rst', '.txt')) or lower.startswith('docs/'):
+        return 'docs'
+    if lower.endswith(('.json', '.jsonc', '.yaml', '.yml', '.toml', '.lock', '.ini', '.env.example')) or lower.startswith('.'):
+        return 'config'
+    return 'src'
+
+
+def patch_breakdown(run_dir):
+    """Tamaño del patch que leen los revisores, por archivo. Solo contadores y rutas: nunca contenido."""
+    try:
+        text = (Path(run_dir) / 'new.patch').read_text(encoding='utf-8', errors='replace')
+    except FileNotFoundError:
+        return None
+    files, current = {}, None
+    for line in text.splitlines(keepends=True):
+        m = re.match(r'diff --git a/(\S+) b/', line)
+        if m:
+            current = files.setdefault(m.group(1), {'path': m.group(1), 'bytes': 0, 'added': 0, 'removed': 0})
+        if current is None:
+            continue
+        current['bytes'] += len(line.encode('utf-8'))
+        if line.startswith('+') and not line.startswith('+++'):
+            current['added'] += 1
+        elif line.startswith('-') and not line.startswith('---'):
+            current['removed'] += 1
+    rows = sorted(files.values(), key=lambda f: (-f['bytes'], f['path']))
+    for row in rows:
+        row['kind'] = file_kind(row['path'])
+    by_kind = {}
+    for row in rows:
+        by_kind[row['kind']] = by_kind.get(row['kind'], 0) + row['bytes']
+    return {'bytes': len(text.encode('utf-8')), 'files_count': len(rows),
+            'lines_added': sum(r['added'] for r in rows), 'lines_removed': sum(r['removed'] for r in rows),
+            'bytes_by_kind': by_kind, 'files': rows[:MAX_PATCH_FILES], 'files_truncated': len(rows) > MAX_PATCH_FILES}
+
+
+def reviewer_searches(run_dir):
+    counts = {}
+    for path in sorted((Path(run_dir) / 'searches').glob('*.json')):
+        data = read_json(path)
+        entries = data.get('searches', []) if isinstance(data, dict) else data if isinstance(data, list) else []
+        counts[path.stem] = sum(1 for e in entries if isinstance(e, dict) and isinstance(e.get('query'), str) and e['query'].strip())
+    return counts
+
+
+def run_diagnostics(run, run_dir, redactions):
+    """Por que la corrida costo lo que costo: motivo del modo, tamaño del patch y actividad por revisor."""
+    from review_usage import repeated_searches
+    run_dir = Path(run_dir)
+    searches = repeated_searches(run_dir)
+    per_reviewer = reviewer_searches(run_dir)
+    reasons = run.get('reviewer_reasons') or {}
+    assignments = run.get('assignments') or {}
+    skipped = run.get('skipped_reviewers') or {}
+    reviewers = []
+    for name in sorted({*run.get('expected_reviewers', []), *reasons, *skipped}):
+        reviewers.append({'reviewer': name, 'status': 'skipped' if name in skipped else 'expected',
+                          'reason': clean_text(skipped.get(name) or reasons.get(name), redactions, 500),
+                          'pending_assigned': len(assignments.get(name) or []),
+                          'searches': per_reviewer.get(name)})
+    body = {'schema_version': 1, 'mode_reason': clean_text(run.get('reason'), redactions, 300),
+            'since_tree': run.get('since_tree'), 'base_tree': run.get('base_tree'),
+            'plugin_version': run.get('plugin_version'), 'patch': patch_breakdown(run_dir),
+            'reviewers': reviewers[:50],
+            'searches': {'distinct': searches['distinct'], 'repeated': searches['repeated']}}
+    return {k: v for k, v in body.items() if v is not None}
+
+
 def reviewer_files(run_dir, expected):
     out = {}
     for reviewer in expected:
@@ -597,6 +672,7 @@ def enqueue(run_dir, quiet=False):
                 'started_at': run_started_at(run_dir)},
         'result': result,
         'usage': usage_records(run_dir),
+        'diagnostics': run_diagnostics(run, run_dir, redactions),
         'redactions': redactions,
     }
     item['run'] = {k: v for k, v in item['run'].items() if v is not None}
@@ -677,7 +753,15 @@ class push_lock:
         return False
 
 
-def push_item(client, item, entry, run_dir_usage):
+def current_diagnostics(item):
+    """Se relee de la corrida si sigue en disco: cubre corridas encoladas antes de existir el diagnostico."""
+    run = read_json(Path(item['run_dir']) / 'run.json') if item.get('run_dir') else None
+    if isinstance(run, dict):
+        return run_diagnostics(run, item['run_dir'], {})
+    return item.get('diagnostics')
+
+
+def push_item(client, item, entry, run_dir_usage, diagnostics=None):
     """Avanza un envio paso a paso. Cada paso es idempotente y queda registrado antes del siguiente."""
     cid = item['client_run_id']
 
@@ -715,6 +799,14 @@ def push_item(client, item, entry, run_dir_usage):
             except HttpError as exc:
                 raise SyncError(exc.message()) from None
         entry['etag'], entry['result_hash'] = etag, result_hash
+    if diagnostics and entry.get('diagnostics_hash') != digest(diagnostics):
+        try:
+            client.request('PUT', f"/v1/review-runs/{entry['run_id']}/diagnostics", diagnostics)
+            entry['diagnostics_hash'] = digest(diagnostics)
+        except HttpError as exc:
+            # Un servidor anterior sin el endpoint no bloquea el resultado ni la telemetria.
+            if exc.status not in (404, 405):
+                raise SyncError(exc.message()) from None
     sent_usage = entry.setdefault('usage', {})
     for record in run_dir_usage:
         h = digest(record['body'])
@@ -747,9 +839,11 @@ def push(repo, timeout=10.0, retry_failed=False):
                 continue
             # La telemetria puede llegar despues del resultado: se relee de la corrida si sigue en disco.
             usage = usage_records(item['run_dir']) if Path(item['run_dir'], 'run.json').exists() else item.get('usage', [])
+            diagnostics = current_diagnostics(item)
             if entry.get('state') == 'sent':
                 pending_usage = [u for u in usage if entry.get('usage', {}).get(u['agent_key']) != digest(u['body'])]
-                if not pending_usage:
+                pending_diag = diagnostics and entry.get('diagnostics_hash') != digest(diagnostics)
+                if not pending_usage and not pending_diag:
                     summary['skipped'] += 1
                     continue
             if stop_transient:
@@ -763,7 +857,7 @@ def push(repo, timeout=10.0, retry_failed=False):
                 summary['errors'].append(f"{cid[:8]}: {entry['error']}")
                 continue
             try:
-                push_item(Client(profile, timeout), item, entry, usage)
+                push_item(Client(profile, timeout), item, entry, usage, diagnostics)
                 entry.update(state='sent', error=None, sent_at=now_iso())
                 summary['sent'] += 1
             except Transient as exc:

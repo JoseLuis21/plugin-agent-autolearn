@@ -492,6 +492,10 @@ esos componentes se envían sin versión en vez de declarar una falsa. Para evit
 
 - Se envían los hallazgos curados, la cobertura, el veredicto, el consumo de tokens por agente y las versiones usadas.
   El repositorio se identifica por su remoto `origin` sin credenciales (nunca por la ruta local).
+- Desde 2.14.0 también va un diagnóstico de coste: el motivo del modo completo/incremental, el tamaño del patch
+  por archivo (ruta, bytes y líneas +/−, nunca contenido), el motivo de cada revisor y cuántas búsquedas registró.
+  Las corridas ya enviadas lo completan en el siguiente `push` si su carpeta sigue en disco. El consumo estimado del
+  orquestador se vuelve a enviar solo al terminar el turno, para que la API no quede con la cifra previa.
 - Antes de encolar se redactan claves y tokens, se omite la evidencia de archivos `.env`/`.pem`/`.key` y se recorta
   cada texto a 4000 caracteres. Nunca se envían patches ni transcripts.
 - La cola y el progreso viven en `.pre-pr-review/sync/`, que nunca se commitea. Reenviar no duplica corridas ni tokens:

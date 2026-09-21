@@ -67,6 +67,10 @@ Compara tokens por revisor, orquestador y hallazgos entre dos resumenes (locales
 indica la version del plugin de cada uno. Solo atribuye diferencias al plugin si `tree` y ventana
 coinciden; para medir calidad entre versiones usa las evaluaciones de `evals/README.md`.
 
+Con sincronizacion activa, el hook Stop reenvia en segundo plano (`review_sync.py push`) tras
+actualizar el orquestador, y el diagnostico de coste (motivo del modo, patch por archivo, busquedas por
+revisor) viaja junto al resultado. Solo contadores y rutas; nunca contenido del patch.
+
 Son artifacts locales excluidos del snapshot: no disparan otra revision. El informe de codigo y
 el ledger no se modifican. Se pueden abrir los resúmenes de distintas pasadas para comparar costes.
 
