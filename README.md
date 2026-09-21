@@ -322,6 +322,33 @@ Los modelos mantienen su configuracion: Opus para code/security/edge/regression/
 Sonnet para test/convention/arquitectura. Bajar de modelo no sustituye eliminar lecturas duplicadas.
 El flujo mejora convergencia y coste sin prometer que una revision encontrara todos los defectos.
 
+**Desde 2.16.0 — menos turnos y menos contexto, los mismos revisores.** Cada turno de un agente relee
+todo su contexto, asi que el coste de una corrida es, sobre todo, *turnos × contexto*:
+
+- **Conversacion larga.** El orquestador hace ~20 turnos y en cada uno relee la conversacion entera. En
+  corridas reales lanzadas tras horas de trabajo en la misma sesion eso fue hasta un 70 % extra de tokens.
+  `prepare_review.py` mide el contexto de la sesion (solo contadores de su transcript) y, por encima de
+  ~150k tokens, el orquestador pregunta una vez si seguir o continuar en una sesion nueva: la corrida ya
+  preparada se reanuda sola y el resultado es identico. `usage-summary.md` lo señala tambien a posteriori.
+- **Cierre en un turno.** `review_usage.py finish` resume tokens, sincroniza y devuelve veredicto, conteos
+  y bloqueantes; el orquestador ya no lee el informe ni `clasificacion.json` para entregar.
+- **Patch grande en un turno.** `patch-index.json` da el rango de cada archivo dentro de `new.patch` para
+  leerlo con lecturas paralelas en lugar de una por turno. Los prompts piden agrupar lecturas y busquedas
+  independientes: la misma evidencia en menos turnos.
+- **Arquitectura Next.js solo con superficie.** En incremental se omite unicamente cuando el delta JS/TS es
+  solo cuerpo de archivos existentes: sin archivos nuevos/movidos, sin imports ni APIs de frontera cambiados,
+  fuera de `_internal`/actions/route/layout/stores/schemas y sin cadenas cliente/servidor (el grafo se resuelve
+  siempre). Una validacion completa nunca lo omite. Los revisores de stack leen un recorte sin tests ni otros
+  lenguajes; el resto conserva el patch completo.
+- **Lo que no se toco, a proposito.** edge-case, regression y test siguen entrando en deltas pequeños: en las
+  corridas medidas encontraron un HIGH y varios MEDIUM que code-reviewer no vio. El agregador sigue
+  redactando: reescribe la mayor parte del porque y del fix al verificar en el arbol, no copia.
+- **Perfil de turnos.** Cada agente registra turnos, herramientas por turno y contexto pico (solo contadores);
+  viaja en el diagnostico a Agent Autolearn para comprobar que de verdad se agrupan las lecturas.
+
+Antes de dar por buena una version que cambie prompts o routing, compara contra la anterior con los casos de
+`evals/` (`eval_review.py compare` falla si se pierde un bug sembrado).
+
 ### Medicion de tokens por corrida
 
 El hook local `SubagentStop` captura los contadores del transcript de cada revisor y del agregador.

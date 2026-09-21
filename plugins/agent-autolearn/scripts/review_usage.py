@@ -69,6 +69,11 @@ def usage_totals(group):
     messages = list(group['messages'].values())
     missing = [field for field in FIELDS if not messages or any(m[field] is None for m in messages)]
     totals = {field: sum(m[field] or 0 for m in messages) for field in FIELDS}
+    # Turn profile, counters only: how much context each turn reread and how many tools it batched.
+    calls = [len(m['tools']) for m in messages]
+    totals.update(peak_context=max((sum(m[f] or 0 for f in FIELDS if f != 'output_tokens') for m in messages), default=0),
+                  tool_calls=sum(calls), single_tool_turns=sum(1 for c in calls if c == 1),
+                  parallel_turns=sum(1 for c in calls if c > 1))
     return dict(totals, requests=len(messages), models=sorted({m['model'] for m in messages}),
                 missing_fields=missing, complete=bool(messages) and not missing and not group['incomplete'])
 
@@ -78,8 +83,12 @@ def add_usage(group, message):
     if not isinstance(ident, str) or not ident or not isinstance(usage, dict):
         group['incomplete'] = True
         return
-    previous = group['messages'].setdefault(ident, {'model': model if isinstance(model, str) else 'unknown',
+    previous = group['messages'].setdefault(ident, {'model': model if isinstance(model, str) else 'unknown', 'tools': set(),
                                                    **{field: None for field in FIELDS}})
+    content = message.get('content')
+    for block in content if isinstance(content, list) else []:
+        if isinstance(block, dict) and block.get('type') == 'tool_use' and isinstance(block.get('id'), str):
+            previous['tools'].add(block['id'])
     for field in FIELDS:
         value = usage.get(field)
         if type(value) is int and value >= 0:
@@ -134,7 +143,7 @@ def orchestrator_usage(path):
                         current['run_dir'] = str(json.loads(markers[-1])['run_dir'])
                     except (ValueError, KeyError, TypeError):
                         pass
-            if any('review_usage.py' in c and 'summarize' in c for c in commands):
+            if any('review_usage.py' in c and ('summarize' in c or 'finish' in c) for c in commands):
                 current['closing'] = True
     if current is not None:
         windows.append(current)
@@ -238,6 +247,19 @@ def repeated_searches(run_dir):
             'queries': sorted(repeated, key=lambda r: (-len(r['reviewers']), r['query']))[:20]}
 
 
+PROFILE = ('peak_context', 'tool_calls', 'single_tool_turns', 'parallel_turns')
+ORCHESTRATOR_CONTEXT_WARN = 100_000
+
+
+def profile(entries):
+    """Older usage files have no turn profile: unknown stays None, never zero."""
+    known = [e for e in entries if all(type(e.get(k)) is int for k in PROFILE)]
+    if not known or len(known) != len(entries):
+        return {k: None for k in PROFILE}
+    return {'peak_context': max(e['peak_context'] for e in known),
+            **{k: sum(e[k] for e in known) for k in PROFILE[1:]}}
+
+
 def findings_summary(run_dir):
     try:
         result = read_json(run_dir / 'clasificacion.json')
@@ -286,6 +308,9 @@ def summarize(run_dir, share=True):
                 'models': sorted({m for e in orchestrators for m in e['models']}),
                 **{k: sum(e[k] for e in orchestrators) for k in FIELDS},
                 'reported_tokens': sum(sum(e[k] for k in FIELDS) for e in orchestrators)}
+        requests = main['requests']
+        main['context_per_request'] = (sum(main[k] for k in FIELDS if k != 'output_tokens') // requests) if requests else None
+        main['long_conversation'] = bool(requests and main['context_per_request'] >= ORCHESTRATOR_CONTEXT_WARN)
     rows = []
     for reviewer, entries in by_reviewer.items():
         counts = {k: sum(e[k] for e in entries)
@@ -295,7 +320,8 @@ def summarize(run_dir, share=True):
                      'status': 'unavailable' if not entries else 'recorded' if all(e['complete'] for e in entries) else 'partial',
                      'requests': sum(e['requests'] for e in entries),
                      'models': sorted({m for e in entries for m in e['models']}),
-                     'reported_tokens': sum(sum(e[k] for k in FIELDS) for e in entries) if entries else None, **counts})
+                     'reported_tokens': sum(sum(e[k] for k in FIELDS) for e in entries) if entries else None, **counts,
+                     **profile(entries)})
     rows.sort(key=lambda row: (row['reported_tokens'] is None, -(row['reported_tokens'] or 0), row['reviewer']))
     observed = [row for row in rows if row['reported_tokens'] is not None]
     subtotal = sum(row['reported_tokens'] for row in observed) if observed else None
@@ -329,6 +355,9 @@ def summarize(run_dir, share=True):
                   (f"Orquestador (estimado, {main['status']}): **{main['reported_tokens']}** tokens en {main['requests']} "
                    f"peticiones de la conversacion principal; con el: **{result['total_with_orchestrator']}**."
                    if main else 'Orquestador: N/D (se estima al terminar el turno, con el hook Stop).'),
+                  *([f"**Conversacion larga:** el orquestador releyo ~{main['context_per_request'] // 1000}k tokens en cada peticion. "
+                     'Lanzar /pre-pr-review desde una sesion nueva (o tras /clear) evita casi todo ese consumo sin cambiar el resultado.']
+                    if main and main.get('long_conversation') else []),
                   f"Consultas: {result['searches']['distinct']} distintas, {result['searches']['repeated']} repetidas entre revisores.",
                   'El subtotal excluye el orquestador y cualquier ejecucion no capturada; N/D no significa cero.',
                   'Contadores del transcript, no factura: la salida puede ser provisional segun runtime.',
@@ -339,6 +368,39 @@ def summarize(run_dir, share=True):
         # Counters only, next to the versioned ledger: travels with the branch, outside the snapshot.
         atomic_json(shared / 'usage' / f"p{run['pass_n']}-{run_dir.name[-8:]}.json", result)
     return result
+
+
+def finish(run_dir):
+    """Everything the orchestrator needs to deliver, in one turn: token summary, sync and the verdict packet.
+
+    Sync is optional and offline first: a failure is reported in one field and never changes the review.
+    """
+    run_dir = Path(run_dir).resolve()
+    usage = summarize(run_dir)
+    run = read_json(run_dir / 'run.json')
+    packet = {'usage': {'status': usage['status'], 'observed_tokens': usage['observed_tokens'],
+                        'measured_agents': usage['measured_agents'], 'summary': str(run_dir / 'usage-summary.md')},
+              'report': run.get('report')}
+    try:
+        result = read_json(run_dir / 'clasificacion.json')
+        by_fp = {h['huella']: h for h in result['hallazgos']}
+        brief = lambda h: {'huella': h['huella'], 'severity': h.get('severity'), 'title': h.get('title'),
+                           'file': h.get('file'), 'line': h.get('line'), 'fix': (h.get('fix') or '')[:400]}
+        packet.update(resumen=result['resumen'], metricas=result.get('metricas'),
+                      bloqueantes=[brief(by_fp[fp]) for fp in result.get('bloqueantes', []) if fp in by_fp],
+                      seguimiento=len(result.get('seguimiento', [])), cerrados=len(result.get('cerrados', [])),
+                      descartados=len(result.get('descartados', [])))
+    except (ValueError, KeyError, TypeError) as exc:
+        packet['resumen_error'] = f'clasificacion.json no disponible o invalido: {exc}'
+    try:
+        import review_sync
+        queued = review_sync.enqueue(run_dir, quiet=True)
+        packet['sync'] = {'queued': bool(queued.get('queued')), 'reason': queued.get('reason')}
+        if queued.get('queued'):
+            push_late_usage(Path(run['repo']).resolve())
+    except Exception as exc:  # noqa: BLE001  Sync never blocks a delivery.
+        packet['sync'] = {'queued': False, 'reason': f'{type(exc).__name__}: {exc}'}
+    return packet
 
 
 def load_summary(path):
@@ -384,6 +446,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('hook')
+    closing = sub.add_parser('finish', help='summarize + enqueue + background push, in one orchestrator turn')
+    closing.add_argument('--run-dir', required=True)
     summary = sub.add_parser('summarize')
     summary.add_argument('--run-dir', required=True)
     summary.add_argument('--no-share', action='store_true', help='Do not copy the counters next to the ledger.')
@@ -396,6 +460,8 @@ def main():
             collect(json.load(sys.stdin))
         elif args.command == 'compare':
             print(compare(args.first, args.second)['markdown'])
+        elif args.command == 'finish':
+            print(json.dumps(finish(args.run_dir), ensure_ascii=False, indent=1))
         else:
             result = summarize(args.run_dir, share=not args.no_share)
             print(json.dumps({'status': result['status'], 'observed_tokens': result['observed_tokens'],

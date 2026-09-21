@@ -387,10 +387,17 @@ class ReviewSyncTests(unittest.TestCase):
         self.assertNotIn('value = 1', json.dumps(diag), 'nunca se envia el contenido del patch')
         code = next(r for r in diag['reviewers'] if r['reviewer'] == 'code-reviewer')
         self.assertEqual(code['searches'], 1)
+        self.assertNotIn('tool_calls', code, 'un registro sin perfil de turnos no inventa ceros')
         self.assertEqual(diag['searches'], {'distinct': 1, 'repeated': 0})
         before = len(self.api.requests)
         self.push(repo)
         self.assertEqual(len(self.api.requests), before, 'un diagnostico sin cambios no se reenvia')
+        usage = Path(run['run_dir']) / 'usage' / 'agent1.json'
+        usage.write_text(json.dumps({**json.loads(usage.read_text()), 'tool_calls': 9, 'single_tool_turns': 1,
+                                     'parallel_turns': 1, 'peak_context': 4321}))
+        self.push(repo)
+        code = next(r for r in self.api.diagnostics['run_1']['reviewers'] if r['reviewer'] == 'code-reviewer')
+        self.assertEqual((code['requests'], code['tool_calls'], code['peak_context']), (2, 9, 4321))
 
     def test_diagnostics_backfill_already_sent_runs_and_tolerate_old_servers(self):
         self.configure()

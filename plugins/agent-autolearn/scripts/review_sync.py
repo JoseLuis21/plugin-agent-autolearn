@@ -471,6 +471,25 @@ def reviewer_searches(run_dir):
     return counts
 
 
+TURN_FIELDS = ('requests', 'tool_calls', 'single_tool_turns', 'parallel_turns')
+
+
+def turn_profiles(run_dir):
+    """{reviewer: contadores de turnos} desde usage/*.json. Archivos sin perfil (plugin anterior) no aportan nada."""
+    out = {}
+    for path in sorted((Path(run_dir) / 'usage').glob('*.json')):
+        value = read_json(path)
+        if not isinstance(value, dict) or not isinstance(value.get('reviewer'), str) or value.get('estimated'):
+            continue
+        if not all(type(value.get(k)) is int for k in (*TURN_FIELDS, 'peak_context')):
+            continue
+        row = out.setdefault(value['reviewer'], {k: 0 for k in (*TURN_FIELDS, 'peak_context')})
+        for k in TURN_FIELDS:
+            row[k] += value[k]
+        row['peak_context'] = max(row['peak_context'], value['peak_context'])
+    return out
+
+
 def run_diagnostics(run, run_dir, redactions):
     """Por que la corrida costo lo que costo: motivo del modo, tamaño del patch y actividad por revisor."""
     from review_usage import repeated_searches
@@ -481,11 +500,13 @@ def run_diagnostics(run, run_dir, redactions):
     assignments = run.get('assignments') or {}
     skipped = run.get('skipped_reviewers') or {}
     reviewers = []
-    for name in sorted({*run.get('expected_reviewers', []), *reasons, *skipped}):
+    turns = turn_profiles(run_dir)
+    names = sorted({*run.get('expected_reviewers', []), *reasons, *skipped})
+    for name in [*names, *(['review-aggregator'] if 'review-aggregator' in turns else [])]:
         reviewers.append({'reviewer': name, 'status': 'skipped' if name in skipped else 'expected',
                           'reason': clean_text(skipped.get(name) or reasons.get(name), redactions, 500),
                           'pending_assigned': len(assignments.get(name) or []),
-                          'searches': per_reviewer.get(name)})
+                          'searches': per_reviewer.get(name), **turns.get(name, {})})
     body = {'schema_version': 1, 'mode_reason': clean_text(run.get('reason'), redactions, 300),
             'since_tree': run.get('since_tree'), 'base_tree': run.get('base_tree'),
             'plugin_version': run.get('plugin_version'), 'patch': patch_breakdown(run_dir),

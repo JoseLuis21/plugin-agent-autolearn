@@ -41,6 +41,11 @@ Cada corrida tiene un directorio unico, con:
   ledger_digest, snapshot_ref, expected_reviewers, skipped_reviewers, reviewer_reasons y assignments.
 - `repo-context.json`: inventario unico de leyes, manifiestos y muestras de tests.
 - `brief.md`: resumen pequeño; `new.patch`: ventana; `full.patch`: contexto opcional en incremental.
+- `patch-index.json`: rango de lineas, tipo y estado de cada archivo dentro de `new.patch`, para leer un patch
+  grande en un turno; `patches/<reviewer>.patch`: recorte sin archivos fuera del stack, solo para los
+  revisores de arquitectura. `new.patch` sigue completo y es el unico insumo del resto.
+- La salida del helper incluye `conversation_context` (`tokens`, `level` ok/note/ask, `warning`) o null.
+  No forma parte de `run.json` ni de la identidad de la corrida: reanudar desde otra sesion la reutiliza.
 - `pending/<reviewer>.json`: hallazgos activos asignados con evidencia/fix/estado previos.
 - `_conventions-raw.json`: unico escaneo; `dependencies.json`: lockfiles y arboles a comparar.
 - `_client-server-raw.json`: grafo de imports de Next.js; cadenas Client Component → modulo

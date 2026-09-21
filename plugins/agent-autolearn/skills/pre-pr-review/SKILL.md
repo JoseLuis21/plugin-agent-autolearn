@@ -53,6 +53,12 @@ y calcula **un solo diff entre arboles**. No modifica el indice real ni crea com
 Excluye artefactos/generados; los lockfiles permanecen en el snapshot y se asignan a seguridad
 para lectura a demanda. Nunca copies snapshots de codigo al directorio versionado de informes.
 
+- `conversation_context.level: ask` (la conversacion ya supera ~150k tokens): antes de lanzar agentes,
+  muestra `conversation_context.warning` y pregunta una sola vez si continuar aqui o seguir en una
+  sesion nueva (o tras `/clear`) volviendo a invocar `/pre-pr-review <rama>`: el helper reanuda esta
+  misma corrida (`resumed: true`) y el resultado es identico. Cada turno del orquestador relee toda la
+  conversacion, asi que es el mayor coste evitable de una revision. Con `note`, no preguntes: mencionalo
+  en una linea al entregar. Con `ok` o `null`, nada. Si el usuario decide continuar, no insistas.
 - `status: unchanged`: no lances agentes. Informa del numero de pendientes; no fuerces otro full.
 - `mode: completo`: primera pasada, `--full`, ledger legado, ancla ausente, base cambiada o rebase.
   La numeracion sigue `max(pasadas.n)+1` y el historial se conserva.
@@ -97,7 +103,7 @@ El helper decide con el **delta actual**, no con todos los archivos historicos d
 | code | Codigo/config o superficie ambigua; o pendientes propios. Incluye limites, contratos y tests cuando no hay especialista |
 | edge-case, regression, test | Validacion completa con codigo, delta grande/señales de riesgo, tests modificados cuando aplica, o pendientes propios |
 | convention | El escaner unico produjo candidatos, o tiene pendientes |
-| nextjs-architecture | Delta JS/TS en Next.js, o pendientes propios. Recibe el grafo de frontera cliente/servidor |
+| nextjs-architecture | Validacion completa con JS/TS en Next.js; en incremental, cuando el delta trae archivos nuevos/movidos, imports o APIs de frontera cambiados, superficie de estructura (`_internal`, actions, route, layout, stores, schemas, package.json) o una cadena cliente/servidor; o pendientes propios. Un delta solo de cuerpo en archivos existentes no lo lanza. Recibe el grafo de frontera cliente/servidor |
 | go-architecture | Delta Go en estructura hexagonal, o pendientes propios |
 
 El helper resuelve el grafo de imports una vez por corrida Next.js y deja en
@@ -138,6 +144,15 @@ Lee references/shared-checks.md y shared-checks.json: reutiliza solo hechos apli
 snapshot, comando, entorno y alcance. Un build verde no prueba correctitud ni seguridad.
 Cada especialista mantiene su analisis independiente; no leas los findings de otros para sustituirlo.
 Lee new.patch una vez; full.patch solo para resolver una duda concreta.
+brief.md indica si el patch es grande. Si lo es, abre patch-index.json (rangos de linea de cada
+archivo dentro de new.patch) y lee el patch entero en UN turno, con lecturas paralelas por rangos
+(varias llamadas en el mismo mensaje), no una lectura por turno. Si es pequeño, una sola lectura.
+Si brief.md nombra un recorte para ti (`patches/<reviewer>.patch`), leelo en lugar de new.patch: solo
+omite archivos fuera de tu stack, listados en patch-index.json y disponibles en new.patch a demanda.
+Cada turno relee todo tu contexto: agrupa en un mismo turno las lecturas y busquedas independientes
+(artifacts de arranque, ventanas de varios archivos, varios grep). No reduzcas evidencia por ello:
+lee lo mismo que leerias, en menos turnos. Prefiere la ventana de la funcion al archivo entero
+cuando el archivo es largo y la ventana basta para el juicio.
 Excepcion convention: lee _conventions-raw.json, sin leer ni volver a escanear el patch.
 Excepcion nextjs-architecture: abre _client-server-raw.json antes del patch y confirma cada
 cadena con en_delta true leyendo sus archivos; confirmada es BLOCKER (rompe el build).
@@ -192,19 +207,18 @@ entre pasadas y sale del conteo accionable, pero sigue visible en el informe.
 
 ## 4. Entregar
 
-Una vez que el agregador haya terminado (tambien si fallo), ejecuta:
+Una vez que el agregador haya terminado (tambien si fallo), ejecuta **un solo comando**:
 
 ```bash
-sh "${CLAUDE_PLUGIN_ROOT}/scripts/py.sh" review_usage.py summarize --run-dir "$RUN_DIR"
+sh "${CLAUDE_PLUGIN_ROOT}/scripts/py.sh" review_usage.py finish --run-dir "$RUN_DIR"
 ```
 
-Despues, sin esperar y sin leer su salida, encola y envia la corrida a Agent Autolearn. Ambos
-comandos no hacen nada si no hay un perfil activo, y un fallo no cambia el veredicto ni el informe:
-
-```bash
-sh "${CLAUDE_PLUGIN_ROOT}/scripts/py.sh" review_sync.py enqueue "$RUN_DIR" --quiet >/dev/null 2>&1 || true
-sh "${CLAUDE_PLUGIN_ROOT}/scripts/py.sh" review_sync.py push --repo "$RUN_DIR" --quiet >/dev/null 2>&1 &
-```
+`finish` resume los tokens, encola y envia la corrida a Agent Autolearn en segundo plano (no hace
+nada sin perfil activo; un fallo queda en `sync.reason` y no cambia el veredicto ni el informe) y
+devuelve lo necesario para entregar: `resumen`, `metricas`, `bloqueantes` (titulo, archivo y fix),
+conteos de seguimiento/cerrados/descartados, `report` y el enlace a `usage.summary`. Entrega con ese
+paquete: no leas el informe ni clasificacion.json salvo que el usuario pida un detalle que no trae.
+`summarize`, `enqueue` y `push` siguen existiendo por separado para diagnostico manual.
 
 El hook SubagentStop registra contadores por peticion del transcript, deduplicados por id.
 Mantiene un archivo por agente real: reintentos nuevos suman; volver a recibir el mismo no duplica.
@@ -218,8 +232,8 @@ el hook Stop al terminar el turno y actualiza el mismo resumen; no lo calcules n
 Una copia solo con contadores queda junto al ledger (`pr-reviews/<rama>/usage/`) para compartirla
 con la rama. Detalles, consultas repetidas y comparacion de corridas: `references/token-usage.md`.
 
-Lee el informe nuevo en `run.report`; de clasificacion.json extrae solo `resumen` con un script.
-No cargues todos los historiales para resumir un informe ya curado.
+Usa el paquete de `finish`. No cargues el informe, clasificacion.json ni historiales para resumir
+algo ya curado; enlaza `run.report` para el detalle.
 Resume en maximo 8 lineas:
 veredicto, conteos, cerrados verificados, abiertos/nuevos, fixes bloqueantes, informe y enlace a tokens.
 Si `resumen.review_complete` es true, termina: PR listo, observaciones restantes como seguimiento

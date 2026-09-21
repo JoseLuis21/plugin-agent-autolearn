@@ -130,6 +130,53 @@ def recover_snapshot(repo, coverage, head, branch):
     return None
 
 
+LARGE_PATCH_LINES = 1800  # a single file read returns about 2000 lines
+CONTEXT_NOTE, CONTEXT_ASK = 100_000, 150_000
+TRANSCRIPT_TAIL = 4_000_000
+
+
+def conversation_context():
+    """Tokens the orchestrator rereads on every turn, from this session's own transcript (counters only).
+
+    The review runs ~20 orchestrator turns; each one rereads the whole conversation. Best effort:
+    any missing piece returns None and never blocks a preparation.
+    """
+    try:
+        session = os.environ.get('CLAUDE_CODE_SESSION_ID') or os.environ.get('CLAUDE_SESSION_ID') or ''
+        if not re.fullmatch(r'[0-9a-fA-F-]{16,64}', session):
+            return None
+        root = Path(os.environ.get('CLAUDE_CONFIG_DIR') or Path.home() / '.claude') / 'projects'
+        found = sorted(root.glob(f'*/{session}.jsonl'), key=lambda f: f.stat().st_mtime)
+        if not found:
+            return None
+        with found[-1].open('rb') as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, stream.tell() - TRANSCRIPT_TAIL))
+            tail = stream.read().decode('utf-8', errors='replace').splitlines()
+        tokens = None
+        for line in tail:
+            try:
+                record = json.loads(line)
+                usage = record['message']['usage']
+                if record.get('type') != 'assistant' or record.get('isSidechain') is True:
+                    continue
+                tokens = sum(int(usage.get(k) or 0) for k in ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'))
+            except (ValueError, KeyError, TypeError):
+                continue
+        if not tokens:
+            return None
+        level = 'ask' if tokens >= CONTEXT_ASK else 'note' if tokens >= CONTEXT_NOTE else 'ok'
+        result = {'tokens': tokens, 'level': level}
+        if level != 'ok':
+            result['warning'] = (
+                f'Esta conversacion ya ocupa ~{tokens // 1000}k tokens y el orquestador los relee en cada uno de sus '
+                f'~20 turnos (~{tokens * 20 // 1_000_000}M tokens extra). Revisar desde una sesion nueva (o tras /clear) '
+                'cuesta una fraccion y no cambia el resultado: la corrida ya preparada se reanuda sola.')
+        return result
+    except (OSError, ValueError):
+        return None
+
+
 def plugin_version():
     try:
         return str(read_json(PLUGIN_ROOT / '.claude-plugin' / 'plugin.json')['version'])
@@ -181,6 +228,115 @@ def resumable_run(repo, run, ledger):
     return best
 
 
+TEST_PATH = re.compile(r'(^|/)(tests?|__tests__|e2e|spec)/|[._-](test|spec)\.[a-z]+$|_test\.go$', re.I)
+JS_EXT = {'.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'}
+# Where the Next.js architecture law can be broken by a small edit. Deliberately generous: a false
+# positive costs one reviewer, a false negative loses a rule.
+NEXT_SURFACE_PATH = re.compile(
+    r'(^|/)(route|middleware|proxy|instrumentation|layout|error|global-error|not-found|loading)\.(tsx?|jsx?|mjs)$'
+    r'|(^|/)_?actions?(/|\.)|\.actions?\.(tsx?|jsx?)$|(^|/)_internal/|(^|/)app/api/|(^|/)next\.config\.'
+    r'|(^|/)(dal|server|stores?|schemas?|dtos?)(/|\.)|(^|/)package\.json$', re.I)
+NEXT_SURFACE_LINE = re.compile(
+    r"""^\s*(import\b|export\s+.*\bfrom\b|.*\brequire\()|['"]use (client|server|cache)['"]|server-only|client-only"""
+    r"""|next/(headers|server|cache|navigation)|\b(cookies|headers|revalidatePath|revalidateTag|unstable_cache|cacheLife|cacheTag)\("""
+    r"""|\bz\.[a-z]+\(|\bprocess\.env\b|dangerouslySetInnerHTML|\bcreate(Store)?\(|\bfetch\(|\b(sql|query|prisma|db)\b""", re.I)
+
+
+def patch_files(patch):
+    """Per-file view of a unified diff: status, changed lines and its line range inside the patch."""
+    files, current = [], None
+    for number, line in enumerate(patch.splitlines(), 1):
+        header = re.match(r'diff --git a/(.+?) b/(.+)$', line)
+        if header:
+            current = {'path': header.group(2), 'new': False, 'deleted': False, 'renamed': False,
+                       'added': [], 'removed': [], 'start_line': number, 'end_line': number}
+            files.append(current)
+            continue
+        if current is None:
+            continue
+        current['end_line'] = number
+        if line.startswith('new file mode'):
+            current['new'] = True
+        elif line.startswith('deleted file mode'):
+            current['deleted'] = True
+        elif line.startswith('rename from '):
+            current['renamed'] = True
+        elif line.startswith('+') and not line.startswith('+++'):
+            current['added'].append(line[1:])
+        elif line.startswith('-') and not line.startswith('---'):
+            current['removed'].append(line[1:])
+    return files
+
+
+def file_kind(path):
+    lower = path.lower()
+    if TEST_PATH.search(path):
+        return 'test'
+    if lower.endswith(('.md', '.mdx', '.rst', '.txt')):
+        return 'docs'
+    if lower.endswith(('.json', '.jsonc', '.yaml', '.yml', '.toml', '.ini', '.lock')) or Path(path).name.startswith('.'):
+        return 'config'
+    return 'src'
+
+
+# Only the stack reviewers get a slice: their law does not apply to other files. Everyone else
+# keeps the whole patch, because correctness, regressions, edge cases and security cross files.
+SLICES = {
+    'nextjs-architecture-reviewer': lambda path, kind: kind != 'test' and (
+        Path(path).suffix.lower() in JS_EXT or Path(path).name == 'package.json' or Path(path).name.startswith('next.config.')),
+    'go-architecture-reviewer': lambda path, kind: kind != 'test' and (path.endswith('.go') or Path(path).name == 'go.mod'),
+}
+
+
+def write_patch_index(run_dir, patch, selected, full_window):
+    """patch-index.json locates every file inside new.patch so it is read in one turn, by ranges.
+
+    patches/<reviewer>.patch is new.patch without the files outside that reviewer's stack; the
+    omitted paths stay listed and new.patch is still there on demand.
+    """
+    lines = patch.splitlines(keepends=True)
+    entries = patch_files(patch)
+    files = [{'path': e['path'], 'kind': file_kind(e['path']),
+              'status': 'new' if e['new'] else 'deleted' if e['deleted'] else 'renamed' if e['renamed'] else 'modified',
+              'added': len(e['added']), 'removed': len(e['removed']),
+              'start_line': e['start_line'], 'end_line': e['end_line']} for e in entries]
+    slices = {}
+    for reviewer, keep in SLICES.items():
+        if reviewer not in selected or reviewer in full_window:
+            continue
+        kept = [f for f in files if keep(f['path'], f['kind'])]
+        omitted = [f['path'] for f in files if not keep(f['path'], f['kind'])]
+        if not omitted:
+            continue
+        text = ''.join(''.join(lines[f['start_line'] - 1:f['end_line']]) for f in kept)
+        (run_dir / 'patches').mkdir(exist_ok=True)
+        (run_dir / 'patches' / f'{reviewer}.patch').write_text(text)
+        slices[reviewer] = {'path': f'patches/{reviewer}.patch', 'files': len(kept), 'lines': len(text.splitlines()),
+                            'omitted': omitted}
+    atomic_json(run_dir / 'patch-index.json', {
+        'schema_version': 1, 'total_lines': len(lines), 'files': files, 'slices': slices,
+        'instruction': 'Rangos de cada archivo dentro de new.patch. Lee el patch en un solo turno con lecturas paralelas '
+                       'por rangos. Si tienes slice, leelo en lugar de new.patch; los omitidos siguen en new.patch a demanda.'})
+    return slices
+
+
+def next_surface(patch):
+    """Why an incremental JS/TS delta needs the architecture reviewer, or None when it is body-only."""
+    for entry in patch_files(patch):
+        path = entry['path']
+        if Path(path).suffix.lower() not in JS_EXT and Path(path).name != 'package.json':
+            continue
+        if TEST_PATH.search(path):
+            continue
+        if entry['new'] or entry['deleted'] or entry['renamed']:
+            return f'archivo nuevo, borrado o movido ({path}).'
+        if NEXT_SURFACE_PATH.search(path):
+            return f'superficie de frontera/estructura ({path}).'
+        if any(NEXT_SURFACE_LINE.search(line) for line in entry['added'] + entry['removed']):
+            return f'imports o APIs de frontera cambiados ({path}).'
+    return None
+
+
 def owner(record):
     candidates = [record.get('reviewer')] + record.get('detectado_por', [])
     return next((r for r in candidates if r in REVIEWERS), 'code-reviewer')
@@ -202,6 +358,7 @@ def boundary_scan(repo, tree, names, files):
 
 def route(repo, tree, files, patch, pending, full):
     selected, reasons = set(), {}
+    body_only = False
     boundary = {'candidates': [], 'client_roots': 0, 'modules_scanned': 0,
                 'client_graph': 0, 'truncated': False, 'omitted': 0,
                 'skipped': 'No aplica: el delta no trae codigo JS/TS de un proyecto Next.js.'}
@@ -244,17 +401,26 @@ def route(repo, tree, files, patch, pending, full):
                     if nextjs:
                         break
         if nextjs:
-            selected.add('nextjs-architecture-reviewer')
-            reasons['nextjs-architecture-reviewer'] = 'Codigo JS/TS del delta en stack Next.js.'
+            # The import graph is always resolved: a chain that breaks the build is never skipped.
             boundary = boundary_scan(repo, tree, names, files)
-            if any(c['en_delta'] for c in boundary['candidates']):
-                reasons['nextjs-architecture-reviewer'] += (
-                    ' El grafo de imports alcanza modulos de servidor desde un Client Component.')
+            chains = any(c['en_delta'] for c in boundary['candidates'])
+            surface = 'validacion completa.' if full else next_surface(patch)
+            if chains or surface:
+                selected.add('nextjs-architecture-reviewer')
+                reasons['nextjs-architecture-reviewer'] = 'Codigo JS/TS del delta en stack Next.js: ' + (
+                    surface or 'cadena cliente/servidor en el delta.')
+                if chains:
+                    reasons['nextjs-architecture-reviewer'] += (
+                        ' El grafo de imports alcanza modulos de servidor desde un Client Component.')
+            else:
+                body_only = True
     if any(p.endswith('.go') for p in code) and any(Path(p).name == 'go.mod' for p in names):
         if any(re.search(r'(^|/)internal/core/(?:[^/]+/)*(ports|adapters|domain|services)/', p) for p in names):
             selected.add('go-architecture-reviewer')
             reasons['go-architecture-reviewer'] = 'Codigo Go del delta en estructura hexagonal.'
     skipped = {r: ('Sin candidatos ni pendientes.' if r == 'convention-reviewer' else
+                   'Delta incremental solo de cuerpo en archivos existentes: sin archivos nuevos, imports, '
+                   'superficie de frontera ni cadenas cliente/servidor.' if r == 'nextjs-architecture-reviewer' and body_only else
                    'Sin superficie del stack en el delta ni pendientes.' if 'architecture' in r else
                    'Checklist asignado a code-reviewer; sin señal de escalacion.' if r in {
                        'edge-case-reviewer', 'regression-reviewer', 'test-reviewer'} and code else
@@ -380,6 +546,7 @@ def prepare(args):
             old_dir, old, done, missing = found
             checks = read_json(old_dir / 'shared-checks.json', {'status': 'invalid'})
             return {'run_dir': str(old_dir), **old, 'active_findings': len(active), 'resumed': True,
+                    'conversation_context': conversation_context(),
                     'completed_reviewers': done, 'pending_reviewers': missing,
                     'shared_checks_status': checks.get('status') if isinstance(checks, dict) else 'invalid'}
     run_dir = Path(args.run_dir).resolve() if args.run_dir else repo / '.pre-pr-review' / f'{stamp}-p{pass_n}-{uuid.uuid4().hex[:8]}'
@@ -390,6 +557,7 @@ def prepare(args):
     for r in selected:
         atomic_json(run_dir / 'pending' / f'{r}.json', [h for h in pending if owner(h) == r])
     (run_dir / 'new.patch').write_text(patch)
+    slices = write_patch_index(run_dir, patch, selected, full_window)
     if full_patch is not None:
         (run_dir / 'full.patch').write_text(full_patch)
     if dismissed:
@@ -421,6 +589,11 @@ def prepare(args):
     brief = [f'# Pre-PR: pasada {pass_n} ({mode})', f'Rama: {branch}; base: {base}; HEAD: {head}',
              f'Snapshot: {since} → {tree}', reason, f'Archivos del delta: {len(files)}; lineas de patch: {len(patch.splitlines())}.',
              'run.json contiene rutas, asignaciones y cobertura. new.patch se lee una vez; full.patch es contexto a demanda.',
+             ('Patch grande: abre patch-index.json (rangos de linea de cada archivo en new.patch) y leelo entero en un '
+              'turno con lecturas paralelas por rangos.' if len(patch.splitlines()) > LARGE_PATCH_LINES else
+              'Patch pequeño: lee new.patch directamente, en una sola lectura; patch-index.json no hace falta.')
+             + (' Recortes por stack: ' + ', '.join(f"{r} → {v['path']}" for r, v in slices.items()) + '.' if slices else ''),
+             'Cada turno relee todo tu contexto: agrupa en un mismo turno las lecturas y busquedas independientes.',
              'pending/<reviewer>.json: revalidaciones obligatorias por huella. dependencies.json: lockfiles para seguridad.',
              'searches.json: indice compartido de consultas/resultados. Reutilizar antes de buscar.',
              'Sin barridos generales: completar ubicaciones del delta y seguir callers afectados cuando haya evidencia.',
@@ -431,6 +604,8 @@ def prepare(args):
         brief.append('Reglas cambiadas: ' + ', '.join(full_window) + ' usan full.patch como ventana en esta pasada.')
     (run_dir / 'brief.md').write_text('\n'.join(brief) + '\n')
     result = {'run_dir': str(run_dir), **run, 'active_findings': len(active), 'resumed': False}
+    if not unchanged:
+        result['conversation_context'] = conversation_context()
     if not args.no_cleanup:
         from retention import cleanup, ledger_trees
         try:

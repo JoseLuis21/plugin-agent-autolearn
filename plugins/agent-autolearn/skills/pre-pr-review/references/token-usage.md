@@ -41,6 +41,17 @@ y una corrida `unchanged` o interrumpida antes de lanzar agentes no se atribuye.
 ventana sin cerrar o contadores incompletos. `observed_tokens` sigue siendo solo revisores y
 agregador. El resumen se regenera solo tras el turno; no hay que esperarlo ni recalcularlo.
 
+## Perfil de turnos y conversacion larga
+
+Cada registro de `usage/` incluye `peak_context`, `tool_calls`, `single_tool_turns` y `parallel_turns`:
+contadores del transcript, sin contenido. Un agente con muchos turnos de una sola herramienta y contexto
+alto es el primer candidato a optimizar. Registros de versiones anteriores no traen perfil: N/D, no cero.
+El resumen marca `orchestrator.long_conversation` cuando el orquestador releyo mas de ~100k tokens por
+peticion; `prepare_review.py` avisa antes (`conversation_context`) leyendo solo el `usage` de la ultima
+peticion de la sesion indicada por `CLAUDE_CODE_SESSION_ID`. Si no puede medir, devuelve null y sigue.
+`review_usage.py finish --run-dir DIR` equivale a `summarize` + `review_sync enqueue` + push en segundo
+plano y devuelve el paquete de entrega; cierra la ventana del orquestador igual que `summarize`.
+
 ## Consultar una corrida
 
 Despues de terminar todos los revisores y el agregador:

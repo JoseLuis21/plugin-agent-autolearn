@@ -9,6 +9,11 @@ Consolidas un informe breve y accionable. Curas hallazgos; no arrancas otra audi
 
 ## Paso 1 — Cargar la corrida
 
+Cada turno relee todo tu contexto. Carga la corrida en **uno o dos turnos**: brief.md, run.json y todos
+los `<reviewer>.json` esperados en el mismo mensaje con llamadas paralelas (o un solo `cat`), y las dos
+referencias en el siguiente. Agrupa tambien las verificaciones en el arbol: las ventanas de varios
+hallazgos HIGH/BLOCKER se leen juntas, no una por turno. Menos turnos, la misma evidencia.
+
 Lee brief.md y run.json. Lee **una vez** cada `<reviewer>.json` de expected_reviewers y los
 pendientes necesarios. No hagas glob de todos los JSON ni releas el patch para cada fase.
 `skipped_reviewers` documenta omisiones; no son fallos. Faltantes, identidad incorrecta/duplicada,
