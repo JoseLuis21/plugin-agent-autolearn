@@ -381,7 +381,7 @@ manual: `plugins/agent-autolearn/skills/pre-pr-review/references/token-usage.md`
 ### Sincronizar con Agent Autolearn (opcional)
 
 Cada corrida puede enviarse a una API [Agent Autolearn](https://github.com/JoseLuis21/agent-autolearn) para ver
-estadísticas, dar feedback y pedir mejoras de las skills desde su panel. Es opcional: sin perfil activo no se envía
+estadísticas y dar feedback desde su panel. Es opcional: sin perfil activo no se envía
 nada, y un fallo de red o de la API nunca cambia el veredicto ni bloquea la revisión. Al terminar, el orquestador
 encola la corrida (sin red) y la envía en segundo plano.
 
@@ -535,10 +535,10 @@ review-sync status --json         # detalle por corrida: estado, id en la API y 
 | Corridas `sync_failed` con `404` | El token está limitado a otros repositorios de ese workspace. Amplíalo en el panel o crea otro token. |
 | `no se encontro Python 3.9+` (Windows) | Instala Python desde python.org y abre una terminal nueva. Si `python` abre la Microsoft Store, desactiva ese alias de ejecución. |
 | Corridas `pending` | La API no respondió (red, 5xx). Se reintentan en el próximo `push` o en la próxima revisión. |
-| Nota «no registrados» o «no hay commit» | Las revisiones llegan, pero sin la versión exacta de las skills, y el análisis con IA necesita esa versión. Ver abajo. |
+| Nota «no registrados» o «no hay commit» | Las revisiones llegan, pero sin la versión exacta de las skills, así que las métricas por versión no las distinguen. Ver abajo. |
 
-**Versiones de skills y agentes.** Para que el panel pueda analizar y mejorar una skill, cada corrida registra el commit
-exacto de los archivos que se ejecutaron. Claude Code ejecuta el plugin desde una copia sin git
+**Versiones de skills y agentes.** Para que el panel pueda separar las métricas por versión de cada skill, cada corrida
+registra el commit exacto de los archivos que se ejecutaron. Claude Code ejecuta el plugin desde una copia sin git
 (`~/.claude/plugins/cache/…`), así que el cliente busca el commit en el clon del marketplace
 (`~/.claude/plugins/marketplaces/agent-autolearn`) o en el clon que indiques con `AGENT_AUTOLEARN_PLUGIN_REPO`, y solo
 registra una versión si su contenido coincide byte a byte con lo que se ejecutó. Si editaste archivos del plugin a mano,
