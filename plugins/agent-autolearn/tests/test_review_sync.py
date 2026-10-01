@@ -325,6 +325,18 @@ class ReviewSyncTests(unittest.TestCase):
         os.environ.pop('CLAUDE_CONFIG_DIR')
         self.assertIn(str(home / '.claude' / rel), review_sync.helper_command(None))
 
+    def test_mcp_without_argument_pins_the_repo_profile(self):
+        repo = ReviewRepo(self, self.temp / 'repo-pin')
+        self.configure('personal', default=False)
+        self.run_cli('use', 'personal', '--repo', str(repo.root))
+        bin_dir = self.temp / 'solo-git'  # Con git para leer el repo, sin claude: imprime el comando.
+        bin_dir.mkdir()
+        (bin_dir / 'git').symlink_to(shutil.which('git'))
+        os.environ['PATH'] = str(bin_dir)
+        code, out, _ = self.run_cli('mcp', '--repo', str(repo.root), '--timeout', '3')
+        self.assertEqual(code, 0)
+        self.assertIn('mcp-headers --profile personal', out)
+
     def test_mcp_with_rejected_token_registers_nothing(self):
         os.environ['AGENT_AUTOLEARN_TOKEN'] = 'alt_' + 'z' * 40
         self.run_cli('configure', '--profile', 'malo', '--url', self.url)

@@ -11,7 +11,7 @@ Uso:
   review_sync.py enqueue RUN_DIR [--quiet]                           # solo local, sin red
   review_sync.py push [--repo DIR] [--timeout 10] [--retry-failed] [--quiet]
   review_sync.py mcp [PERFIL] [--name agent-autolearn] [--scope user|local]
-                                   # registra el MCP de la API en Claude Code reutilizando el token del perfil
+                                   # registra el MCP en Claude Code con el token del perfil (sin argumento: el del repo)
   review_sync.py mcp-headers [--profile NOMBRE]                     # headersHelper: imprime la cabecera Authorization
 
 Perfil activo: AGENT_AUTOLEARN_PROFILE > .agent-autolearn.json del repo > perfil por defecto > ninguno
@@ -1159,7 +1159,7 @@ def origin(url):
 
 def cmd_mcp_headers(args):
     """headersHelper de Claude Code: lee el token del perfil en cada conexion, asi nunca se copia a su config.
-    Sin --profile sigue al repo donde se abre Claude Code, igual que la sincronizacion."""
+    `mcp` siempre pasa --profile; sin el, se resuelve como la sincronizacion desde --repo."""
     name = args.profile
     if not name:
         root = git(args.repo, 'rev-parse', '--show-toplevel')
@@ -1186,12 +1186,11 @@ def helper_command(profile):
 
 
 def cmd_mcp(args):
-    if args.profile:
-        name, how = args.profile, f"fijo en '{args.profile}'"
-    else:
-        root = git(args.repo, 'rev-parse', '--show-toplevel')
-        name, _ = resolve_profile(root)
-        how = 'sigue al perfil de cada repo (.agent-autolearn.json)'
+    # El perfil queda fijo en el helper: Claude Code lo ejecuta desde su directorio de configuracion, no desde
+    # el repo, asi que no podria leer el .agent-autolearn.json. Sin argumento se toma el del repo actual.
+    name = args.profile
+    if not name:
+        name, _ = resolve_profile(git(args.repo, 'rev-parse', '--show-toplevel'))
         if not name:
             raise SyncError('No hay perfil activo aqui: indica uno (review-sync mcp PERFIL) o ejecuta  review-sync use PERFIL.')
     profile = profile_config(name)
@@ -1208,7 +1207,7 @@ def cmd_mcp(args):
         raise SyncError(f"El token del perfil '{name}' no tiene permiso read: el MCP lo necesita. Crea uno de instalacion con ingest + read.")
 
     config = {'type': 'http', 'url': profile['url'].rstrip('/') + '/mcp',
-              'headersHelper': helper_command(args.profile)}
+              'headersHelper': helper_command(name)}
     payload = json.dumps(config)
     claude = shutil.which('claude')
     if not claude:
@@ -1222,7 +1221,7 @@ def cmd_mcp(args):
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if out.returncode != 0:
         raise SyncError(f"claude mcp add-json fallo: {out.stdout.decode('utf-8', errors='replace').strip()}")
-    print(f"✓ MCP '{args.name}' → {config['url']} · workspace '{workspace}' · perfil {how} · alcance {args.scope}")
+    print(f"✓ MCP '{args.name}' → {config['url']} · workspace '{workspace}' · perfil '{name}' · alcance {args.scope}")
     print('  El token no se copia: Claude Code lo pide al perfil en cada conexion. Compruebalo con /mcp.')
 
 
