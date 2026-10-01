@@ -945,8 +945,17 @@ def cmd_configure(args):
 def stable_script_path():
     """Ruta del script que sobrevive a /plugin update: el clon del marketplace, no la cache versionada."""
     here = Path(__file__).resolve()
-    marketplace = Path.home() / '.claude' / 'plugins' / 'marketplaces' / 'agent-autolearn' / 'plugins' / 'agent-autolearn' / 'scripts' / here.name
-    return marketplace if marketplace.is_file() else here
+    rel = Path('plugins', 'marketplaces', 'agent-autolearn', 'plugins', 'agent-autolearn', 'scripts', here.name)
+    # Primero el directorio de Claude que ejecuta este script: con CLAUDE_CONFIG_DIR no es ~/.claude, y otro
+    # directorio puede tener un clon viejo del plugin.
+    roots = [d.parent for d in here.parents if d.name == 'plugins' and (d / 'marketplaces').is_dir()][:1]
+    if os.environ.get('CLAUDE_CONFIG_DIR'):
+        roots.append(Path(os.environ['CLAUDE_CONFIG_DIR']).expanduser())
+    roots.append(Path.home() / '.claude')
+    for root in roots:
+        if (root / rel).is_file():
+            return root / rel
+    return here
 
 
 def is_windows():

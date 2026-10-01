@@ -314,6 +314,17 @@ class ReviewSyncTests(unittest.TestCase):
         self.assertTrue(config['headersHelper'].endswith('mcp-headers --profile personal'))
         self.assertNotIn(TOKEN, log.read_text() + out)
 
+    def test_helper_uses_the_plugin_of_the_active_claude_config_dir(self):
+        home, config = self.temp / 'home', self.temp / 'claude-otra'
+        rel = Path('plugins', 'marketplaces', 'agent-autolearn', 'plugins', 'agent-autolearn', 'scripts', 'review_sync.py')
+        for root in (home / '.claude', config):  # ~/.claude con un clon viejo y el directorio activo.
+            (root / rel).parent.mkdir(parents=True)
+            (root / rel).write_text('')
+        os.environ.update(HOME=str(home), CLAUDE_CONFIG_DIR=str(config))
+        self.assertIn(str(config / rel), review_sync.helper_command('personal'))
+        os.environ.pop('CLAUDE_CONFIG_DIR')
+        self.assertIn(str(home / '.claude' / rel), review_sync.helper_command(None))
+
     def test_mcp_with_rejected_token_registers_nothing(self):
         os.environ['AGENT_AUTOLEARN_TOKEN'] = 'alt_' + 'z' * 40
         self.run_cli('configure', '--profile', 'malo', '--url', self.url)
