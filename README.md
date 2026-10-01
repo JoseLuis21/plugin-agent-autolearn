@@ -382,8 +382,8 @@ manual: `plugins/agent-autolearn/skills/pre-pr-review/references/token-usage.md`
 
 Cada corrida puede enviarse a una API [Agent Autolearn](https://github.com/JoseLuis21/agent-autolearn) para ver
 estadísticas y dar feedback desde su panel. Esa API también expone un endpoint MCP de solo lectura, así que puedes
-conectar Claude Code a esos datos y pedirle que analice qué mejorar en las skills (`claude mcp add --transport http
-agent-autolearn <url>/mcp --header "Authorization: Bearer alt_…"`; ver su README). Es opcional: sin perfil activo no se envía
+conectar Claude Code a esos datos y pedirle que analice qué mejorar en las skills: `review-sync mcp` lo registra
+reutilizando el token del perfil (sin copiarlo; ver su README). Es opcional: sin perfil activo no se envía
 nada, y un fallo de red o de la API nunca cambia el veredicto ni bloquea la revisión. Al terminar, el orquestador
 encola la corrida (sin red) y la envía en segundo plano.
 

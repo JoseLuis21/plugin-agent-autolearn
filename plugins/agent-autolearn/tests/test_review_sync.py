@@ -268,6 +268,61 @@ class ReviewSyncTests(unittest.TestCase):
         self.assertTrue(line.startswith(f"alias review-sync='\"{Path(sys.executable).as_posix()}\" "), line)
         self.assertNotIn('\\', line)
 
+    # ---------- MCP ----------
+
+    def run_cli(self, *args):
+        from contextlib import redirect_stderr, redirect_stdout
+        from io import StringIO
+        out, err = StringIO(), StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = review_sync.main(list(args))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_mcp_headers_follow_the_repo_profile_and_stay_on_its_instance(self):
+        repo = ReviewRepo(self, self.temp / 'repo-mcp')
+        self.configure('personal', default=False)
+        code, _, err = self.run_cli('mcp-headers', '--repo', str(repo.root))
+        self.assertEqual(code, 2)
+        self.assertNotIn(TOKEN, err)
+        self.run_cli('use', 'personal', '--repo', str(repo.root))
+        os.environ['CLAUDE_CODE_MCP_SERVER_URL'] = self.url + '/mcp'
+        code, out, _ = self.run_cli('mcp-headers', '--repo', str(repo.root))
+        self.assertEqual((code, json.loads(out)), (0, {'Authorization': f'Bearer {TOKEN}'}))
+        os.environ['CLAUDE_CODE_MCP_SERVER_URL'] = 'https://otra.example/mcp'  # Otra instancia: no recibe el token.
+        code, out, err = self.run_cli('mcp-headers', '--profile', 'personal')
+        self.assertEqual((code, out), (2, ''))
+        self.assertNotIn(TOKEN, err)
+
+    def test_mcp_registers_a_helper_never_the_token(self):
+        self.configure('personal')
+        bin_dir = self.temp / 'bin'
+        bin_dir.mkdir()
+        log = self.temp / 'claude-args.json'
+        fake = bin_dir / 'claude'
+        fake.write_text(f'#!{sys.executable}\nimport json, sys\n'
+                        f'open({str(log)!r}, "a").write(json.dumps(sys.argv[1:]) + "\\n")\n')
+        fake.chmod(0o755)
+        os.environ['PATH'] = f'{bin_dir}{os.pathsep}{os.environ.get("PATH", "")}'
+        code, out, _ = self.run_cli('mcp', 'personal', '--timeout', '3')
+        self.assertEqual(code, 0)
+        self.assertIn('Workspace Personal', out)
+        calls = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertEqual(calls[0][:3], ['mcp', 'remove', 'agent-autolearn'])
+        self.assertEqual(calls[1][:2], ['mcp', 'add-json'])
+        config = json.loads(calls[1][3])
+        self.assertEqual(config['url'], self.url + '/mcp')
+        self.assertTrue(config['headersHelper'].endswith('mcp-headers --profile personal'))
+        self.assertNotIn(TOKEN, log.read_text() + out)
+
+    def test_mcp_with_rejected_token_registers_nothing(self):
+        os.environ['AGENT_AUTOLEARN_TOKEN'] = 'alt_' + 'z' * 40
+        self.run_cli('configure', '--profile', 'malo', '--url', self.url)
+        os.environ.pop('AGENT_AUTOLEARN_TOKEN')
+        os.environ['PATH'] = str(self.temp / 'sin-claude')
+        code, out, err = self.run_cli('mcp', 'malo', '--timeout', '3')
+        self.assertEqual((code, out), (2, ''))
+        self.assertIn('rechazo', err)
+
     def test_setup_with_rejected_token_saves_nothing(self):
         repo = ReviewRepo(self, self.temp / 'repo-bad')
         code, out = self.setup_cmd('empresa', '--default', token='alt_' + 'z' * 40, cwd_repo=repo.root)
