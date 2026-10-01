@@ -10,6 +10,7 @@ Uso:
   review_sync.py status [--repo DIR] [--json]
   review_sync.py enqueue RUN_DIR [--quiet]                           # solo local, sin red
   review_sync.py push [--repo DIR] [--timeout 10] [--retry-failed] [--quiet]
+  review_sync.py pull [--repo DIR] [--timeout 5] [--quiet]          # descartes humanos del panel -> pr-reviews/accepted.json
   review_sync.py mcp [PERFIL] [--name agent-autolearn] [--scope user|local]
                                    # registra el MCP en Claude Code con el token del perfil (sin argumento: el del repo)
   review_sync.py mcp-headers [--profile NOMBRE]                     # headersHelper: imprime la cabecera Authorization
@@ -1150,6 +1151,70 @@ def cmd_push(args):
         print(json.dumps(summary, indent=2, ensure_ascii=False))
 
 
+# ---------- feedback del panel -> accepted.json ----------
+
+PULL_ORIGIN = 'agent-autolearn'
+SEVERITIES = ('NIT', 'LOW', 'MEDIUM', 'HIGH', 'BLOCKER')
+
+
+def accepted_path(repo):
+    return Path(repo) / 'pr-reviews' / 'accepted.json'
+
+
+def merge_decisions(current, decisions):
+    """Reescribe solo las aceptaciones traidas del panel. Las manuales mandan: si ya aceptan esa huella,
+    no se duplica (el ledger rechaza huellas repetidas). Devuelve (data, añadidas, retiradas)."""
+    entries = current.get('aceptados') if isinstance(current.get('aceptados'), list) else []
+    manual = [e for e in entries if not (isinstance(e, dict) and e.get('origen') == PULL_ORIGIN)]
+    manual_fps = {e.get('huella') for e in manual if isinstance(e, dict)}
+    before = {e['huella']: e for e in entries if isinstance(e, dict) and e.get('origen') == PULL_ORIGIN and e.get('huella')}
+    pulled = []
+    for d in decisions:
+        fp, severity = d.get('fingerprint'), d.get('severity')
+        if d.get('judgment') != 'dismissed' or not fp or fp in manual_fps or severity not in SEVERITIES:
+            continue
+        # Techo = severidad que tenia al descartarlo: si el hallazgo empeora, vuelve a abrirse.
+        pulled.append({'huella': fp, 'techo_severidad': severity, 'motivo': d.get('reason') or '',
+                       'autor': d.get('author_label') or '', 'origen': PULL_ORIGIN, 'feedback_id': d.get('feedback_id'),
+                       'decidido': d.get('decided_at'), 'rama': d.get('branch'),
+                       'ref': {k: d.get(k) for k in ('category', 'file', 'symbol')}})
+    pulled.sort(key=lambda e: e['huella'])
+    after = {e['huella']: e for e in pulled}
+    added = sorted(set(after) - set(before))
+    removed = sorted(set(before) - set(after))
+    return {**current, 'aceptados': manual + pulled}, added, removed
+
+
+def cmd_pull(args):
+    """Antes de revisar: lo que una persona descarto en el panel queda aceptado en este repo. Sin perfil,
+    sin red o con la API caida no toca nada: la revision sigue igual que siempre."""
+    repo = repo_root(args.repo)
+    name, _ = resolve_profile(repo)
+    profile = profile_config(name)
+    remote = normalize_remote(git(repo, 'remote', 'get-url', 'origin'))
+    if not profile or not remote:
+        if not args.quiet:
+            print('Sin perfil activo o sin remoto origin: no se traen decisiones.')
+        return
+    try:
+        _, data, _ = Client(profile, args.timeout, backoff=0).request('GET', '/v1/finding-decisions?' + urllib.parse.urlencode({'remote': remote}))
+    except (HttpError, Transient) as exc:
+        msg = exc.message() if isinstance(exc, HttpError) else str(exc)
+        print(f'review_sync.py: no se pudieron traer las decisiones del panel ({msg}); accepted.json queda igual.', file=sys.stderr)
+        return
+    path = accepted_path(repo)
+    current = read_json(path) if path.exists() else {'aceptados': []}
+    if not isinstance(current, dict):  # Ilegible: mejor no tocar las aceptaciones manuales que contenga.
+        raise SyncError(f'{path} no es un objeto JSON valido; no se modifica.')
+    merged, added, removed = merge_decisions(current, data.get('data') or [])
+    if added or removed or merged != current:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_json(path, merged)
+    total = sum(1 for e in merged['aceptados'] if isinstance(e, dict) and e.get('origen') == PULL_ORIGIN)
+    if not args.quiet or added or removed:
+        print(json.dumps({'accepted': str(path), 'from_panel': total, 'added': added, 'removed': removed}, ensure_ascii=False))
+
+
 # ---------- MCP ----------
 
 def origin(url):
@@ -1262,6 +1327,11 @@ def main(argv=None):
     p.add_argument('--retry-failed', action='store_true')
     p.add_argument('--quiet', action='store_true')
     p.set_defaults(fn=cmd_push)
+    p = sub.add_parser('pull')
+    p.add_argument('--repo', default='.')
+    p.add_argument('--timeout', type=float, default=5.0)
+    p.add_argument('--quiet', action='store_true')
+    p.set_defaults(fn=cmd_pull)
     p = sub.add_parser('mcp')
     p.add_argument('profile', nargs='?')
     p.add_argument('--name', default='agent-autolearn')

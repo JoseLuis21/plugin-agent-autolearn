@@ -39,9 +39,15 @@ No añadas `--full` por estar cerca de abrir el PR ni porque exista un informe p
 usalo solo cuando el usuario pida expresamente una revision completa.
 
 ```bash
+sh "${CLAUDE_PLUGIN_ROOT}/scripts/py.sh" review_sync.py pull --repo "$ROOT" --quiet
 sh "${CLAUDE_PLUGIN_ROOT}/scripts/py.sh" prepare_review.py --repo "$ROOT"
 # Añade --full para validar toda la rama, o --verify-pending para revalidar sin delta.
 ```
+
+`pull` trae de Agent Autolearn lo que una persona descarto («no es un problema») y lo deja en
+`pr-reviews/accepted.json` con techo = la severidad que tenia, asi no vuelve como pendiente. Sin perfil,
+sin red o con la API caida no toca nada y no es un error: sigue con prepare. Si imprime algo, menciona
+en la entrega cuantas aceptaciones llegaron o se retiraron.
 
 El helper fija development y decide completo/incremental a partir de la cobertura guardada. Lee su salida y conserva
 `run_dir`. No copies todos los artifacts al prompt. `run.json` contiene las rutas y decisiones.
@@ -201,7 +207,9 @@ La referencia al snapshot avanza solo tras validar toda la corrida. Un fallo dej
 previa y produce `REVISION INCOMPLETA`; conserva artifacts para completar o diagnosticar.
 No relances silenciosamente ni declares GO. Los conteos salen de `clasificacion.json` final.
 
-`accepted.json` solo cambia por instruccion humana expresa, con motivo y autor del usuario.
+`accepted.json` solo cambia por instruccion humana expresa, con motivo y autor del usuario, o por `pull`,
+que trae juicios humanos del panel (`origen: agent-autolearn`, con su autor y motivo). No edites a mano esas
+entradas: se reescriben en cada `pull`; una aceptacion manual con la misma huella manda.
 Su techo de severidad se aplica tambien a hallazgos arrastrados. `decision_externa` se conserva
 entre pasadas y sale del conteo accionable, pero sigue visible en el informe.
 

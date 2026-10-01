@@ -255,7 +255,8 @@ no detiene la preparacion. `PRE_PR_RETENTION_DAYS=0` o `--no-cleanup` la desacti
 `python3 scripts/retention.py --repo . [--days N] [--keep N]` muestra el plan; `--apply` lo ejecuta.
 
 `accepted.json` requiere `aceptados: []`, con huella o categoria/archivo/simbolo y
-`techo_severidad`. Solo el usuario decide aceptaciones. El techo se vuelve a aplicar a los registros
+`techo_severidad`. Solo el usuario decide aceptaciones: a mano, o descartando el hallazgo en Agent
+Autolearn (`review_sync.py pull` lo escribe con `origen: agent-autolearn` y techo = su severidad). El techo se vuelve a aplicar a los registros
 arrastrados y aliases; una severidad mayor vuelve a abrirlo. Los externos no cuentan para el
 veredicto accionable, incluidos los arrastrados. Usa siempre conteos/veredicto de la clasificacion
 final; en error reporta revision incompleta, sin inventar conteos vacios.

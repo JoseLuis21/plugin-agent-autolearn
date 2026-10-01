@@ -387,6 +387,12 @@ reutilizando el token del perfil (sin copiarlo; ver su README). Es opcional: sin
 nada, y un fallo de red o de la API nunca cambia el veredicto ni bloquea la revisión. Al terminar, el orquestador
 encola la corrida (sin red) y la envía en segundo plano.
 
+El feedback también vuelve: al empezar, `/pre-pr-review` ejecuta `review-sync pull`, que trae lo que una persona
+marcó como «no es un problema» en el panel (incluidas las opiniones vía link que un admin contó) y lo escribe en
+`pr-reviews/accepted.json` con techo = la severidad que tenía. Así un HIGH descartado pasa a aceptado en la
+siguiente pasada en vez de volver como pendiente; si después empeora, se reabre. Si alguien corrige el juicio en
+el panel, la aceptación se retira en el próximo `pull`. Las aceptaciones escritas a mano no se tocan y mandan.
+
 **Conceptos**
 
 | | Qué es |

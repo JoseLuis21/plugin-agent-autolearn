@@ -33,6 +33,7 @@ class FakeApi:
         self.fail = []  # [(method, fragmento de ruta, status, veces)]
         self.idem = {}
         self.repos, self.versions, self.runs, self.usage, self.diagnostics = {}, {}, {}, {}, {}
+        self.decisions, self.decision_queries = [], []
         self.lock = threading.Lock()
 
     def created(self, kind):
@@ -59,6 +60,9 @@ class FakeApi:
             return resp
 
     def route(self, method, path, headers, body):
+        if path.startswith('/v1/finding-decisions?'):
+            self.decision_queries.append(path)
+            return 200, {'repository_id': 'repo_1', 'data': self.decisions}, {}
         if path == '/v1/me':
             return 200, {'organization': {'name': 'Workspace Personal'}, 'actor': {'label': 'instalacion:test'},
                          'capabilities': {'ingest': True, 'read': True, 'approve': False}}, {}
@@ -267,6 +271,76 @@ class ReviewSyncTests(unittest.TestCase):
             line = review_sync.alias_line()
         self.assertTrue(line.startswith(f"alias review-sync='\"{Path(sys.executable).as_posix()}\" "), line)
         self.assertNotIn('\\', line)
+
+    # ---------- decisiones del panel ----------
+
+    def decision(self, fp, judgment='dismissed', severity='HIGH'):
+        return {'fingerprint': fp, 'judgment': judgment, 'severity': severity, 'category': 'api', 'file': 'a.go', 'symbol': 'X',
+                'reason': f'motivo {fp}', 'author_label': 'Diego (vía link)', 'feedback_id': f'fb_{fp}', 'run_id': 'run_1',
+                'branch': 'feature/x', 'decided_at': '2026-10-01T00:00:00Z'}
+
+    def pull_repo(self):
+        repo = ReviewRepo(self, self.temp / 'repo-pull')
+        repo.git('remote', 'add', 'origin', 'git@github.com:Acme/Shop.git')
+        self.configure('personal')
+        return repo
+
+    def pull(self, repo):
+        from contextlib import redirect_stderr, redirect_stdout
+        from io import StringIO
+        out, err = StringIO(), StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = review_sync.main(['pull', '--repo', str(repo.root), '--timeout', '3'])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_pull_accepts_human_dismissals_with_their_severity_as_ceiling(self):
+        import ledger
+        repo = self.pull_repo()
+        path = repo.root / 'pr-reviews' / 'accepted.json'
+        path.parent.mkdir()
+        manual = {'huella': 'manual1', 'techo_severidad': 'LOW', 'motivo': 'lo decidio el usuario'}
+        path.write_text(json.dumps({'aceptados': [manual, {'huella': 'fp-both', 'techo_severidad': 'MEDIUM'}]}))
+        self.api.decisions = [self.decision('fp-high'), self.decision('fp-low', severity='LOW'),
+                              self.decision('fp-real', judgment='confirmed'), self.decision('fp-both')]
+        code, out, _ = self.pull(repo)
+        self.assertEqual(code, 0)
+        from urllib.parse import parse_qs, urlsplit
+        self.assertEqual(parse_qs(urlsplit(self.api.decision_queries[0]).query)['remote'], [review_sync.normalize_remote('git@github.com:Acme/Shop.git')])
+        data = json.loads(path.read_text())
+        by_fp = {e['huella']: e for e in data['aceptados']}
+        self.assertEqual(by_fp['manual1'], manual, 'las aceptaciones manuales no se tocan')
+        self.assertEqual(by_fp['fp-both']['techo_severidad'], 'MEDIUM', 'la manual manda sobre la del panel')
+        self.assertEqual((by_fp['fp-high']['techo_severidad'], by_fp['fp-high']['origen']), ('HIGH', 'agent-autolearn'))
+        self.assertEqual(by_fp['fp-low']['techo_severidad'], 'LOW')
+        self.assertNotIn('fp-real', by_fp, 'un «es real» no se acepta')
+        self.assertEqual(set(ledger.accepted_map(path)), {'manual1', 'fp-both', 'fp-high', 'fp-low'}, 'el ledger lo lee sin errores')
+        self.assertEqual(json.loads(out)['added'], ['fp-high', 'fp-low'])
+
+        self.api.decisions = [self.decision('fp-high', judgment='confirmed'), self.decision('fp-low', severity='LOW')]
+        code, out, _ = self.pull(repo)
+        self.assertEqual(json.loads(out)['removed'], ['fp-high'], 'si alguien corrige el juicio, la aceptacion se retira')
+        self.assertEqual({e['huella'] for e in json.loads(path.read_text())['aceptados']}, {'manual1', 'fp-both', 'fp-low'})
+
+    def test_pull_without_api_or_with_unreadable_file_changes_nothing(self):
+        repo = self.pull_repo()
+        path = repo.root / 'pr-reviews' / 'accepted.json'
+        self.api.fail.append(('GET', '/v1/finding-decisions', 503, 10))
+        code, _, err = self.pull(repo)
+        self.assertEqual((code, path.exists()), (0, False), 'un fallo de red no bloquea la revision')
+        self.assertIn('no se pudieron traer', err)
+        path.parent.mkdir()
+        path.write_text('{roto')
+        self.api.fail.clear()
+        self.api.decisions = [self.decision('fp-high')]
+        self.assertEqual(self.pull(repo)[0], 2)
+        self.assertEqual(path.read_text(), '{roto')
+
+    def test_pull_without_profile_is_a_no_op(self):
+        repo = ReviewRepo(self, self.temp / 'repo-pull-off')
+        repo.git('remote', 'add', 'origin', 'git@github.com:Acme/Shop.git')
+        self.assertEqual(self.pull(repo)[0], 0)
+        self.assertEqual(self.api.decision_queries, [])
+        self.assertFalse((repo.root / 'pr-reviews').exists())
 
     # ---------- MCP ----------
 
