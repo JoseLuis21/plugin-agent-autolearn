@@ -145,7 +145,7 @@ de ese stack. Si quieres consultarla a mano, `/agent-autolearn:development-nextj
 **La revisión, antes de abrir el PR:**
 
 ```
-/pre-pr-review              # pregunta que rama existente revisar contra development
+/pre-pr-review              # lista las ramas para elegir cual revisar contra development
 /pre-pr-review feature/leads # revisa esa rama; incremental tras la primera cobertura
 /pre-pr-review --full       # repetir revision completa solo cuando se solicita
 /pre-pr-review --verify-pending # revalidar pendientes aunque el contenido no cambie

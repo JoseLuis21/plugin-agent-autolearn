@@ -1,6 +1,6 @@
 ---
 name: pre-pr-review
-description: Pregunta que rama existente revisar si el usuario no la indico y revisala siempre contra development, con revisores por delta y ledger persistente. Reutiliza su cobertura para continuar incremental; --full solo por peticion explicita. Usar al pedir revision pre-PR o invocar /pre-pr-review.
+description: Lista las ramas existentes para elegir cual revisar si el usuario no la indico y revisala siempre contra development, con revisores por delta y ledger persistente. Reutiliza su cobertura para continuar incremental; --full solo por peticion explicita. Usar al pedir revision pre-PR o invocar /pre-pr-review.
 ---
 
 # Pre-PR Review
@@ -12,7 +12,23 @@ Las decisiones finales del agregador y las verificaciones explicitas actualizan 
 ## 1. Preparar una vez
 
 **Primero identifica la rama del PR.** Si el usuario no la indico en el mensaje, argumentos o
-contexto de esta revision, pregunta: **«¿Que rama existente quieres que revise contra development?»**
+contexto de esta revision, **dale a elegir de una lista** en vez de pedirle que escriba el nombre:
+
+```bash
+git -C "$ROOT" fetch --prune origin 2>/dev/null
+git -C "$ROOT" for-each-ref --sort=-committerdate \
+  --format='%(refname:short)|%(committerdate:relative)|%(subject)' refs/heads refs/remotes/origin
+```
+
+Quita `origin/HEAD`, `origin` a secas, development, main, master, prod y production, y deja una
+sola entrada por rama (sin el prefijo `origin/`; si existe local y remota, gana la local). Pregunta
+con la herramienta **AskUserQuestion**: «¿Que rama quieres que revise contra development?», con las
+4 ramas mas recientes como opciones (etiqueta = nombre exacto de la rama; descripcion = fecha
+relativa y asunto del ultimo commit, marcando cual es la rama actual si aparece). Si hay mas de 4,
+lista el resto en el texto de la pregunta o indica que puede escribirla en «Other». Si no hay
+ninguna rama candidata, pregunta el nombre como texto libre. Sin AskUserQuestion disponible, muestra
+la lista numerada y deja elegir por numero o nombre.
+
 Espera su respuesta antes de preparar o lanzar revisores. No asumas que es la rama actualmente
 abierta. Si ya la indico, reutiliza esa respuesta sin volver a preguntarla en cada pasada.
 
