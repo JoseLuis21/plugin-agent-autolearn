@@ -310,4 +310,21 @@ Mismo simbolo/archivo tocado no demuestra que un arreglo causo otro bug: usa `RE
 Una cobertura completa valida contra development se conserva: las siguientes corridas son
 incrementales. Una invalidacion real requiere explicar el motivo y obtener la decision del usuario
 antes de repetir el full; `--full` explicito ya expresa esa decision.
-No hagas commit, push ni abras el PR. Si hay HIGH/BLOCKER, ofrece corregirlos; solo con autorizacion.
+No commitees codigo ni abras el PR. Si hay HIGH/BLOCKER, ofrece corregirlos; solo con autorizacion.
+
+**Ofrece subir la revision a la rama** tras el resumen, una vez por pasada y solo si el agregador
+termino y `git -C "$ROOT" status --porcelain -- pr-reviews/` muestra cambios. Pregunta con
+**AskUserQuestion**: «¿Quieres commitear y pushear la revision a <rama>?», opciones «Commitear y
+pushear», «Solo commitear» y «No». Con si, añade **solo** `pr-reviews/` (ledger, informe, usage y
+accepted.json); nada de codigo, `.pre-pr-review/` ni `.agent-autolearn.json`. No uses `git add -A`
+ni toques lo que ya estaba staged: commitea con pathspec para no arrastrarlo.
+
+```bash
+git -C "$ROOT" add -- pr-reviews/
+git -C "$ROOT" commit -m "pre-pr-review: pasada p<N> de <rama>" -- pr-reviews/
+git -C "$ROOT" push origin "<rama>"   # solo con «Commitear y pushear»; -u si no tiene upstream
+```
+
+Sin remoto, o si el push se rechaza por divergencia, no hagas pull, rebase ni force: deja el commit
+local y explicalo en una linea. `pr-reviews/` esta fuera del delta, asi que el commit no abre otra
+pasada. Sin AskUserQuestion, pregunta en texto; sin respuesta afirmativa, no commitees.

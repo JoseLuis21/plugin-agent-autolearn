@@ -41,6 +41,7 @@ Revisión multi-agente del diff **antes** de abrir un PR.
   → review-aggregator: valida evidencia, cura findings y descartes
   → ledger.py: valida cobertura y persiste las decisiones finales
   → pr-reviews/pr-<rama>-<hash>/<fecha>-p<N>.md
+  → pregunta si commitear y pushear pr-reviews/ a la rama
 ```
 
 Seguridad corre para todo delta no excluido, incluidos docs/tests/config y lockfiles. Code cubre
@@ -161,8 +162,9 @@ Revisa el contenido neto de la rama **y** staged, unstaged y untracked no ignora
 `pr-reviews/pr-<rama>-<hash>/<fecha>-p<N>.md`, versionado con el código: las pasadas sucesivas sobre la misma
 rama quedan una al lado de la otra.
 
-El flujo **solo lee y reporta**: no modifica código, no commitea, no abre el PR.
+El flujo **solo lee y reporta**: no modifica código ni abre el PR.
 Si hay BLOCKER o HIGH, Claude ofrece corregirlos — pero no toca nada sin que se lo pidas.
+Al terminar pregunta si quieres commitear y pushear la revisión (`pr-reviews/`, nada de código) a la rama.
 
 ## Estructura
 
