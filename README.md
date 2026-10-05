@@ -35,6 +35,7 @@ Revisión multi-agente del diff **antes** de abrir un PR.
 
 ```text
 /pre-pr-review [rama-del-pr] [--full | --verify-pending]  # siempre contra development
+  → git pull --ff-only de la rama y, si el repo no sincroniza con un workspace, ofrece hacerlo
   → prepare_review.py: snapshot real, delta, contexto y asignaciones
   → revisores asignados en paralelo: seguridad + correctitud/especialistas segun riesgo
   → review-aggregator: valida evidencia, cura findings y descartes
@@ -525,7 +526,9 @@ cambia a ese workspace para verlas.
 
 #### 5. Uso diario
 
-No hace falta nada: `/pre-pr-review` encola y envía al terminar. Comandos para cuando lo necesites:
+No hace falta nada: `/pre-pr-review` encola y envía al terminar. Si el repo no tiene perfil activo, al empezar
+pregunta con qué perfil configurado sincronizarlo y ejecuta `review-sync use` por ti (deja `.agent-autolearn.json`
+en `.git/info/exclude` si no está commiteado). Comandos para cuando lo necesites:
 
 ```bash
 review-sync push                  # envía lo pendiente (p. ej. tras estar sin conexión)

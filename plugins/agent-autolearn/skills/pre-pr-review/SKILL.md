@@ -39,6 +39,46 @@ descarte ni traslado de cambios. Si la rama no se encuentra, pide corregir el no
 disponible; no la crees desde development. Confirma que el checkout corresponde a la rama indicada
 antes de ejecutar el helper. `$ROOT` debe apuntar a ese checkout.
 
+**Trae los ultimos cambios de la rama** antes de revisarla, una vez por pasada, ya en su checkout:
+
+```bash
+git -C "$ROOT" ls-remote --exit-code --heads origin "<rama>" >/dev/null 2>&1 \
+  && git -C "$ROOT" pull --ff-only origin "<rama>"
+```
+
+Solo avance rapido: nunca merge, rebase, reset, stash ni descarte de cambios locales. Si la rama no
+existe en origin (solo local), no hay remoto o falla la red, sigue con lo local y mencionalo en una
+linea al entregar. Si el pull se niega porque la rama local diverge de origin o porque los cambios
+locales chocan con los entrantes, detente: explica el motivo y pregunta si revisar el estado local
+tal cual o esperar a que lo resuelva; no lo resuelvas tu. Si trajo commits, dilo en una linea.
+
+**Comprueba que el repo sincroniza con un workspace** de Agent Autolearn, una vez por conversacion:
+
+```bash
+sh "${CLAUDE_PLUGIN_ROOT}/scripts/py.sh" review_sync.py status --repo "$ROOT" --json --timeout 3
+```
+
+- `profile` con valor y `configured: true`: ya sincroniza; no preguntes nada.
+- `profile` con valor y `configured: false`: el repo pide un perfil que no existe en este equipo.
+  Mencionalo en una linea (se crea con `review-sync setup <perfil>` en su terminal) y sigue.
+- `profile: null`: lista los perfiles con `review_sync.py profiles` (nombre, URL y prefijo del
+  token, separados por tabulador). Si hay alguno, pregunta con **AskUserQuestion**: «Este repo no
+  sincroniza sus revisiones con ningun workspace. ¿Quieres sincronizarlo?», con una opcion por perfil
+  (etiqueta = «Sincronizar con <perfil>», maximo 3) y la ultima «No sincronizar». Si elige un perfil,
+  ejecuta:
+
+  ```bash
+  sh "${CLAUDE_PLUGIN_ROOT}/scripts/py.sh" review_sync.py use "<perfil>" --repo "$ROOT"
+  ```
+
+  `use` escribe `.agent-autolearn.json` en la raiz. Si queda sin trackear, añadelo a
+  `.git/info/exclude` (con salto de linea final) para que no entre en el delta de la revision, y
+  di que puede commitearlo si quiere que todo el equipo envie el repo al mismo workspace. Despues
+  vuelve a ejecutar `status --json` y confirma en una linea el workspace que responde la API.
+  Si no hay perfiles, no preguntes: el token se pide sin eco y solo se puede crear desde su
+  terminal, asi que indica en una linea `review_sync.py setup <perfil>` (README, «Sincronizar con Agent Autolearn»)
+  y sigue. «No sincronizar» o cualquier fallo de este paso no bloquea la revision.
+
 La base es **siempre development**, aunque el PR apunte a main/production o `origin/HEAD`
 apunte a otra rama. Nunca uses main, master, prod ni production como base de revision.
 Actualiza `origin/development` con `git fetch origin development` cuando haya remoto y acceso;

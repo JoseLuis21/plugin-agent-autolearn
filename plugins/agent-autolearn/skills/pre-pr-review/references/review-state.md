@@ -4,8 +4,9 @@ Python 3 + Git; sin dependencias externas. Los scripts viven en `scripts/` del p
 
 ## Preparacion
 
-El orquestador lista las ramas para elegir si el usuario aun no la indico y selecciona su checkout
-antes de invocar el CLI. El helper revisa ese checkout; el nombre de la rama del PR nunca se pasa
+El orquestador lista las ramas para elegir si el usuario aun no la indico, selecciona su checkout,
+trae los ultimos cambios con `git pull --ff-only` y comprueba el perfil de sincronizacion antes de
+invocar el CLI. El helper revisa ese checkout; el nombre de la rama del PR nunca se pasa
 como `--base`, que sigue fijada a development. No se crea una rama nueva para cada revision.
 
 ```bash
