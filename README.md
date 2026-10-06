@@ -274,7 +274,9 @@ expresa del usuario, con su motivo. El techo de severidad se aplica tambien a ha
 un LOW aceptado vuelve a contar si sube a HIGH. Los externos siguen visibles fuera del conteo accionable.
 
 Una corrida interrumpida se reanuda sola: si codigo, ledger, reglas y asignaciones no cambiaron,
-el helper devuelve la misma corrida y solo se lanzan los revisores que faltan. Un descarte previo
+el helper devuelve la misma corrida y solo se lanzan los revisores que faltan. Si la pasada ya se habia
+sincronizado (p. ej. como incompleta tras una consolidacion fallida), su resultado nuevo se envia como
+revision con `revision_reason`; el servidor conserva la anterior. Un descarte previo
 viaja como contexto a los revisores de ese archivo y solo se reabre con `new_evidence`; nunca se
 suprime por script. Si cambian las reglas de un revisor (su agente, su ley o el contrato), el
 helper lo avisa y el usuario decide entre repetir solo ese revisor sobre la rama o conservar la

@@ -53,6 +53,7 @@ DEFAULT_URL = 'https://agent-autolearn.josephluihs.workers.dev'  # setup la usa 
 MAX_TEXT = 4000
 TRANSIENT = {408, 425, 429, 500, 502, 503, 504}
 LOCK_STALE_SECONDS = 600
+REVISION_REASON = 'Reanudacion de la corrida: este resultado reemplaza al enviado antes para la misma pasada.'
 
 
 class SyncError(Exception):
@@ -818,12 +819,17 @@ def push_item(client, item, entry, run_dir_usage, diagnostics=None):
     result_hash = digest(item['result'])
     if entry.get('result_hash') != result_hash:
         path = f"/v1/review-runs/{entry['run_id']}/result"
+        body = item['result']
+        if entry.get('result_hash'):
+            # Ya se envio otro resultado de esta pasada (p. ej. reanudada tras una consolidacion fallida):
+            # el servidor lo guarda como revision nueva. Texto fijo para que un reintento siga siendo idempotente.
+            body = dict(body, revision_reason=REVISION_REASON)
         try:
-            _, _, etag = call('PUT', path, item['result'], if_match=entry.get('etag') or '1')
+            _, _, etag = call('PUT', path, body, if_match=entry.get('etag') or '1')
         except HttpError:  # 412: otra escritura cambio la corrida. Se relee el ETag una sola vez.
             _, _, current = call('GET', f"/v1/review-runs/{entry['run_id']}")
             try:
-                _, _, etag = call('PUT', path, item['result'], if_match=current)
+                _, _, etag = call('PUT', path, body, if_match=current)
             except HttpError as exc:
                 raise SyncError(exc.message()) from None
         entry['etag'], entry['result_hash'] = etag, result_hash

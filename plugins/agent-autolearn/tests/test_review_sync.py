@@ -91,6 +91,9 @@ class FakeApi:
                     return 200, {'id': run['id'], 'replayed': True}, {'etag': f'"{run["version"]}"'}
                 if (headers.get('if-match') or '').strip('"') != str(run['version']):
                     return 412, {'error': {'code': 'precondition_failed', 'message': 'etag', 'request_id': 'r'}}, {}
+                if run['result'] is not None and not body.get('revision_reason'):
+                    return 422, {'error': {'code': 'unprocessable', 'message': 'revision_reason', 'request_id': 'r'}}, {}
+                run.setdefault('revisions', []).append(body)
                 run.update(result=body, result_hash=h, version=run['version'] + 1)
                 return 200, {'id': run['id']}, {'etag': f'"{run["version"]}"'}
             if parts[4:] == ['diagnostics'] and method == 'PUT':
@@ -588,6 +591,33 @@ class ReviewSyncTests(unittest.TestCase):
         self.assertEqual(len(self.api.requests), before)
         state = self.push(repo, '--retry-failed')
         self.assertEqual(state['runs'][cid]['state'], 'sent')
+
+    def test_resumed_run_sends_its_new_result_as_a_revision(self):
+        self.configure()
+        repo, run = self.finalized_run()
+        result = Path(run['run_dir']) / 'clasificacion.json'
+        clasif = json.loads(result.read_text())
+        run_json = Path(run['run_dir']) / 'run.json'
+        finalized = json.loads(run_json.read_text())
+        # Primera consolidacion fallida: se envia como incompleta.
+        run_json.write_text(json.dumps({**finalized, 'status': 'running'}))
+        result.write_text(json.dumps({'resumen': {'errors': ['code-reviewer: duplicate finding fingerprint.']}}))
+        cid = review_sync.enqueue(run['run_dir'])['client_run_id']
+        self.push(repo)
+        self.assertEqual(self.api.runs['run_1']['result']['status'], 'incomplete')
+        # Reanudacion: la misma pasada termina bien y su resultado llega como revision nueva.
+        run_json.write_text(json.dumps(finalized))
+        result.write_text(json.dumps(clasif))
+        review_sync.enqueue(run['run_dir'])
+        state = self.push(repo)
+        self.assertEqual(state['runs'][cid]['state'], 'sent', state['runs'][cid].get('error'))
+        first, second = self.api.runs['run_1']['revisions']
+        self.assertNotIn('revision_reason', first)
+        self.assertEqual(second['status'], 'completed')
+        self.assertTrue(second['revision_reason'])
+        before = len(self.api.requests)
+        self.push(repo)
+        self.assertEqual(len(self.api.requests), before, 'la revision ya enviada no se repite')
 
     def test_stale_etag_is_refreshed_once(self):
         self.configure()
