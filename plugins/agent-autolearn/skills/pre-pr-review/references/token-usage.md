@@ -39,7 +39,10 @@ Es una **estimacion** y se reporta aparte (`orchestrator`, `orchestrator_tokens`
 `total_with_orchestrator`): incluye la lectura de cache del contexto previo de la conversacion,
 y una corrida `unchanged` o interrumpida antes de lanzar agentes no se atribuye. `partial` indica
 ventana sin cerrar o contadores incompletos. `observed_tokens` sigue siendo solo revisores y
-agregador. El resumen se regenera solo tras el turno; no hay que esperarlo ni recalcularlo.
+agregador. `finish` la calcula con el transcript de la sesion (`CLAUDE_CODE_SESSION_ID`) y la incluye
+en la copia de `pr-reviews/<rama>/usage/` antes de ofrecer el commit. El hook Stop la actualiza al final
+del turno solo en el resumen local y en la sincronizacion: nunca reescribe `pr-reviews/`, para no dejar
+cambios sin commitear tras la entrega. Sin sesion localizable, la copia compartida queda sin orquestador.
 
 ## Perfil de turnos y conversacion larga
 

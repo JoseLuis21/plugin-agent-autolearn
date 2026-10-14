@@ -291,10 +291,10 @@ Lee solo la salida compacta del script y enlaza `usage-summary.md` junto al info
 el informe del agregador. Nunca inventes tokens, uses caracteres como medida ni sumes el
 `total_tokens` de la ultima peticion como si fuera toda la ejecucion. Si faltan hooks/transcripts,
 reporta medicion parcial/N/D: no es cero ni afecta al veredicto de codigo.
-El subtotal cubre revisores y agregador, **no el orquestador**: su consumo se estima aparte con
-el hook Stop al terminar el turno y actualiza el mismo resumen; no lo calcules ni lo esperes.
+El subtotal cubre revisores y agregador, **no el orquestador**: `finish` estima su consumo aparte
+hasta ese momento y el hook Stop solo refresca el resumen local; no lo calcules ni lo esperes.
 Una copia solo con contadores queda junto al ledger (`pr-reviews/<rama>/usage/`) para compartirla
-con la rama. Detalles, consultas repetidas y comparacion de corridas: `references/token-usage.md`.
+con la rama; la escribe `finish` y nada la toca despues, asi entra completa en el commit de la revision. Detalles, consultas repetidas y comparacion de corridas: `references/token-usage.md`.
 
 Usa el paquete de `finish`. No cargues el informe, clasificacion.json ni historiales para resumir
 algo ya curado; enlaza `run.report` para el detalle.

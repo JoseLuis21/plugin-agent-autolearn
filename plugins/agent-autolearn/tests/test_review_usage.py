@@ -223,6 +223,38 @@ class UsageTests(unittest.TestCase):
         self.assertFalse((self.root / 'usage').exists())
         self.assertIsNone(self.summary(outside)['orchestrator'])
 
+    def test_finish_shares_the_orchestrator_before_the_commit_and_stop_leaves_pr_reviews_alone(self):
+        session = '0f0f0f0f-1111-2222-3333-444444444444'
+        shared = self.root / 'pr-reviews' / 'pr-feature-abc'
+        shared.mkdir(parents=True)
+        run = json.loads((self.run / 'run.json').read_text())
+        run.update(ledger=str(shared / 'ledger.json'))
+        (self.run / 'run.json').write_text(json.dumps(run))
+        config = self.root / 'cfg'
+        main = config / 'projects' / '-repo' / f'{session}.jsonl'
+        main.parent.mkdir(parents=True)
+        turn = [self.human('/pre-pr-review feature'), *self.review_turn('r1')[:4],
+                self.call('r1-finish', 'Bash', command='sh x/scripts/py.sh review_usage.py finish --run-dir "$RUN_DIR"')]
+        main.write_text(''.join(json.dumps(r) + '\n' for r in turn))
+        env = {'CLAUDE_CONFIG_DIR': str(config), 'CLAUDE_CODE_SESSION_ID': session,
+               'AGENT_AUTOLEARN_CONFIG': str(self.root / 'none.json'), 'PATH': '/usr/bin:/bin'}
+        result = subprocess.run([sys.executable, '-B', str(SCRIPT), 'finish', '--run-dir', str(self.run)],
+                                env=env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        copy = shared / 'usage' / 'p2-first.json'
+        before = copy.read_text()
+        self.assertEqual(json.loads(before)['orchestrator']['requests'], 3)
+        self.assertEqual(json.loads(before)['orchestrator']['status'], 'estimated')
+        # The delivery and the commit run after finish; the Stop hook refreshes only the local summary.
+        turn += [self.assistant('r1-delivery'), self.call('r1-commit', 'Bash', command='git commit -- pr-reviews/')]
+        main.write_text(''.join(json.dumps(r) + '\n' for r in turn))
+        result = self.cli('hook', event=dict(hook_event_name='Stop', cwd=str(self.root), session_id=session,
+                                             transcript_path=str(main)))
+        self.assertEqual(copy.read_text(), before)
+        local = json.loads((self.run / 'usage-summary.json').read_text())
+        self.assertEqual(local['orchestrator']['requests'], 5)
+        self.assertEqual(len(list((self.run / 'usage').glob('orchestrator-*.json'))), 1)
+
     def test_summary_reports_repeated_searches_findings_and_travels_with_the_ledger(self):
         shared = self.root / 'pr-reviews' / 'pr-feature-abc'
         shared.mkdir(parents=True)

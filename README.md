@@ -367,8 +367,9 @@ No agrega llamadas al modelo ni cambia la cobertura. Al terminar, el orquestador
 salida registrada, cache creada/leida, peticiones y ranking por revisor. La marca `PRE_PR_USAGE`
 en los prompts vincula cada agente a su corrida; los reintentos se suman sin duplicar callbacks.
 
-El hook `Stop` estima aparte el consumo del orquestador (ventana de la conversacion principal entre
-preparar y resumir la corrida). El resumen incluye version del plugin, consultas repetidas entre
+El consumo del orquestador se estima aparte (ventana de la conversacion principal entre preparar y
+resumir la corrida): `finish` lo incluye en la copia compartida antes de ofrecer el commit y el hook
+`Stop` solo refresca el resumen local, sin dejar `pr-reviews/` modificado tras la entrega. El resumen incluye version del plugin, consultas repetidas entre
 revisores y hallazgos; una copia solo con contadores viaja con la rama en `pr-reviews/<rama>/usage/`
 y `review_usage.py compare A B` enfrenta dos corridas. `clasificacion.json.metricas` da falsos
 positivos, duplicados fusionados y rondas hasta aprobacion. `shared_checks.py` valida por script

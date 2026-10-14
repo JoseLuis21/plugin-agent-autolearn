@@ -15,7 +15,7 @@ import subprocess
 import sys
 
 from ledger import atomic_json, read_json
-from prepare_review import REVIEWERS, output
+from prepare_review import REVIEWERS, output, session_transcript
 
 FIELDS = ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'output_tokens')
 MARKER = re.compile(r'^PRE_PR_USAGE: (\{[^\n]+\})$', re.MULTILINE)
@@ -168,29 +168,38 @@ def push_late_usage(repo):
                      start_new_session=True, env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
 
 
+def record_orchestrator(repo, path, session, only=None, closing=False):
+    """Write the orchestrator estimate of each run in this transcript; returns the run dirs written."""
+    if not isinstance(session, str) or not session:
+        raise ValueError('Missing session identity')
+    identity = 'orchestrator-' + hashlib.sha256(session.encode()).hexdigest()[:24]
+    written = []
+    for directory, counters in orchestrator_usage(path).items():
+        run_dir = Path(directory).resolve()
+        if (only is not None and run_dir != only) or not run_dir.is_relative_to(repo / '.pre-pr-review'):
+            continue
+        run = read_json(run_dir / 'run.json')
+        if Path(run['repo']).resolve() != repo or (run_dir / 'usage').is_symlink():
+            continue
+        if closing:
+            counters['closed'] = True  # finish itself closes the window, even if its call is not flushed yet.
+        atomic_json(run_dir / 'usage' / f'{identity}.json', {
+            'schema_version': 1, 'run_dir': str(run_dir), 'reviewer': 'orchestrator', 'agent_key': identity,
+            'source': 'claude_main_transcript_window', 'estimated': True, **counters})
+        written.append(run_dir)
+    return written
+
+
 def collect_orchestrator(event):
     path = Path(event['transcript_path'])
     if 'prepare_review.py' not in path.read_text(encoding='utf-8', errors='replace'):
         return
     repo = Path(output(event['cwd'], 'rev-parse', '--show-toplevel')).resolve()
-    session = event['session_id']
-    if not isinstance(session, str) or not session:
-        raise ValueError('Missing session identity')
-    identity = 'orchestrator-' + hashlib.sha256(session.encode()).hexdigest()[:24]
-    written = False
-    for directory, counters in orchestrator_usage(path).items():
-        run_dir = Path(directory).resolve()
-        if not run_dir.is_relative_to(repo / '.pre-pr-review'):
-            continue
-        run = read_json(run_dir / 'run.json')
-        if Path(run['repo']).resolve() != repo or (run_dir / 'usage').is_symlink():
-            continue
-        atomic_json(run_dir / 'usage' / f'{identity}.json', {
-            'schema_version': 1, 'run_dir': str(run_dir), 'reviewer': 'orchestrator', 'agent_key': identity,
-            'source': 'claude_main_transcript_window', 'estimated': True, **counters})
-        written = True
+    written = record_orchestrator(repo, path, event['session_id'])
+    for run_dir in written:
         if (run_dir / 'usage-summary.json').exists():
-            summarize(run_dir)
+            # finish already shared the counters before offering the commit: never dirty pr-reviews/ afterwards.
+            summarize(run_dir, share=False)
     if written:
         push_late_usage(repo)
 
@@ -376,8 +385,15 @@ def finish(run_dir):
     Sync is optional and offline first: a failure is reported in one field and never changes the review.
     """
     run_dir = Path(run_dir).resolve()
-    usage = summarize(run_dir)
     run = read_json(run_dir / 'run.json')
+    try:
+        # Estimate the orchestrator now, so the shared copy is complete before the commit is offered.
+        transcript = session_transcript()
+        if transcript is not None:
+            record_orchestrator(Path(run['repo']).resolve(), transcript, transcript.stem, only=run_dir, closing=True)
+    except (ValueError, OSError, KeyError, TypeError):
+        pass  # Best effort: the Stop hook still estimates it locally.
+    usage = summarize(run_dir)
     packet = {'usage': {'status': usage['status'], 'observed_tokens': usage['observed_tokens'],
                         'measured_agents': usage['measured_agents'], 'summary': str(run_dir / 'usage-summary.md')},
               'report': run.get('report')}

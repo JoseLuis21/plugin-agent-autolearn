@@ -135,6 +135,16 @@ CONTEXT_NOTE, CONTEXT_ASK = 100_000, 150_000
 TRANSCRIPT_TAIL = 4_000_000
 
 
+def session_transcript():
+    """This session's main transcript, from CLAUDE_CODE_SESSION_ID; None when it cannot be located."""
+    session = os.environ.get('CLAUDE_CODE_SESSION_ID') or os.environ.get('CLAUDE_SESSION_ID') or ''
+    if not re.fullmatch(r'[0-9a-fA-F-]{16,64}', session):
+        return None
+    root = Path(os.environ.get('CLAUDE_CONFIG_DIR') or Path.home() / '.claude') / 'projects'
+    found = sorted(root.glob(f'*/{session}.jsonl'), key=lambda f: f.stat().st_mtime)
+    return found[-1] if found else None
+
+
 def conversation_context():
     """Tokens the orchestrator rereads on every turn, from this session's own transcript (counters only).
 
@@ -142,14 +152,10 @@ def conversation_context():
     any missing piece returns None and never blocks a preparation.
     """
     try:
-        session = os.environ.get('CLAUDE_CODE_SESSION_ID') or os.environ.get('CLAUDE_SESSION_ID') or ''
-        if not re.fullmatch(r'[0-9a-fA-F-]{16,64}', session):
+        transcript = session_transcript()
+        if transcript is None:
             return None
-        root = Path(os.environ.get('CLAUDE_CONFIG_DIR') or Path.home() / '.claude') / 'projects'
-        found = sorted(root.glob(f'*/{session}.jsonl'), key=lambda f: f.stat().st_mtime)
-        if not found:
-            return None
-        with found[-1].open('rb') as stream:
+        with transcript.open('rb') as stream:
             stream.seek(0, os.SEEK_END)
             stream.seek(max(0, stream.tell() - TRANSCRIPT_TAIL))
             tail = stream.read().decode('utf-8', errors='replace').splitlines()
