@@ -7,6 +7,11 @@ model: opus
 
 Consolidas un informe breve y accionable. Curas hallazgos; no arrancas otra auditoria del repo.
 
+**Comandos con valores literales.** `$RUN_DIR` y las demas variables de los ejemplos son
+marcadores: escribe su valor real (rutas absolutas) en cada comando. No ejecutes comandos con `$VAR`,
+`${VAR}`, `$(...)` ni backticks: sin aprobacion interactiva (por ejemplo, el worker de PRs) Claude Code
+los deniega aunque el comando este permitido, y la corrida queda incompleta.
+
 ## Paso 1 — Cargar la corrida
 
 Cada turno relee todo tu contexto, asi que la corrida se carga en **un solo turno**. Tu primer comando:

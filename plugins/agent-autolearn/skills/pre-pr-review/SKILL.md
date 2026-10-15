@@ -9,6 +9,11 @@ Preparas contexto, lanzas revisores y agregas. No arreglas codigo durante la rev
 La memoria es el **contenido revisado con cobertura completa**, no solo el commit HEAD.
 Las decisiones finales del agregador y las verificaciones explicitas actualizan el ledger.
 
+**Comandos con valores literales.** `$ROOT`, `$RUN_DIR` y las demas variables de los ejemplos son
+marcadores: escribe su valor real (rutas absolutas) en cada comando. No ejecutes comandos con `$VAR`,
+`${VAR}`, `$(...)` ni backticks: sin aprobacion interactiva (por ejemplo, el worker de PRs) Claude Code
+los deniega aunque el comando este permitido, y la corrida queda incompleta.
+
 ## 1. Preparar una vez
 
 **Primero identifica la rama del PR.** Si el usuario no la indico en el mensaje, argumentos o
@@ -103,13 +108,15 @@ git -C "$ROOT" status --porcelain -- .gitignore                       # cambios 
   Con «Sacarla de git», añade la regla como en el caso anterior y commitea **solo** eso en un indice
   temporal, para no arrastrar lo que el usuario tenga staged. Nunca borres los archivos locales.
 
+  Primero `git -C "$ROOT" rev-parse --absolute-git-dir`; `<indice>` es esa ruta seguida de
+  `/pre-pr-review-untrack.index`. Despues, con los valores literales:
+
   ```bash
-  TMP_INDEX="$(git -C "$ROOT" rev-parse --absolute-git-dir)/pre-pr-review-untrack.index"
-  GIT_INDEX_FILE="$TMP_INDEX" git -C "$ROOT" read-tree HEAD
-  GIT_INDEX_FILE="$TMP_INDEX" git -C "$ROOT" rm -r --cached --quiet -- pr-reviews/
-  GIT_INDEX_FILE="$TMP_INDEX" git -C "$ROOT" add -- .gitignore
-  GIT_INDEX_FILE="$TMP_INDEX" git -C "$ROOT" commit -q -m "chore: deja pr-reviews/ fuera de git"
-  rm -f "$TMP_INDEX"
+  GIT_INDEX_FILE="<indice>" git -C "$ROOT" read-tree HEAD
+  GIT_INDEX_FILE="<indice>" git -C "$ROOT" rm -r --cached --quiet -- pr-reviews/
+  GIT_INDEX_FILE="<indice>" git -C "$ROOT" add -- .gitignore
+  GIT_INDEX_FILE="<indice>" git -C "$ROOT" commit -q -m "chore: deja pr-reviews/ fuera de git"
+  rm -f "<indice>"
   git -C "$ROOT" reset -q -- .gitignore pr-reviews/   # el indice real queda igual que el commit
   ```
 

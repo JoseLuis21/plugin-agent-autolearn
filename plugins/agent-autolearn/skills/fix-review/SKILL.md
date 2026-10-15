@@ -10,6 +10,11 @@ Corriges los hallazgos abiertos de la ultima revision pre-PR de una rama. La rev
 ni decidir que un hallazgo esta cerrado. Solo la siguiente pasada de `/pre-pr-review` lo verifica y
 lo cierra.
 
+**Comandos con valores literales.** `$ROOT`, `$RUN_DIR` y las demas variables de los ejemplos son
+marcadores: escribe su valor real (rutas absolutas) en cada comando. No ejecutes comandos con `$VAR`,
+`${VAR}`, `$(...)` ni backticks: sin aprobacion interactiva (por ejemplo, el worker de PRs) Claude Code
+los deniega aunque el comando este permitido, y la corrida queda incompleta.
+
 ## 1. Elegir la rama
 
 `$ROOT` es la raiz del repo (`git rev-parse --show-toplevel`). Si el usuario indico la rama en el
