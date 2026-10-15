@@ -10,6 +10,7 @@ Un solo plugin con dos cosas que se apoyan la una en la otra:
 |---|---|---|
 | **Skills de arquitectura** | La ley de cada stack, en `skills/development-*` | Mientras escribes código. Claude las carga solo al detectar el stack |
 | **`/pre-pr-review`** | Revisión multi-agente del diff | Antes de abrir el PR. Verifica **esas mismas leyes** |
+| **`/fix-review`** | Corrige los hallazgos abiertos de la última revisión de una rama | Después de una revisión, local o del worker de PRs |
 
 La ley se escribe una vez y sirve para las dos cosas: quien programa la lee para hacerlo bien, y el
 revisor la lee para comprobarlo. No hay dos versiones que se puedan separar.
@@ -41,7 +42,7 @@ Revisión multi-agente del diff **antes** de abrir un PR.
   → review-aggregator: valida evidencia, cura findings y descartes
   → ledger.py: valida cobertura y persiste las decisiones finales
   → pr-reviews/pr-<rama>-<hash>/<fecha>-p<N>.md
-  → pregunta si commitear y pushear pr-reviews/ a la rama
+  → pr-reviews/ queda fuera de git (si estaba versionada, pregunta antes de sacarla)
 ```
 
 Seguridad corre para todo delta no excluido, incluidos docs/tests/config y lockfiles. Code cubre
@@ -121,6 +122,28 @@ si hay candidatos o pendientes y confirma cada hit leyendo el archivo real. Las 
 Para ajustar las listas de palabras o de patrones, edita `scripts/scan_conventions.py`;
 para ajustar las excepciones, `agents/convention-reviewer.md`.
 
+### `/fix-review`
+
+Corrige lo que dejó abierto la última revisión de una rama, sin copiar informes a mano.
+
+```text
+/fix-review [rama]          # sin rama: pregunta cual, con la actual como recomendada
+  → git pull --ff-only de la rama
+  → review_sync.py latest: ultima revision de la rama desde Agent Autolearn (o el ledger local)
+  → tabla de hallazgos abiertos; eliges: bloqueantes, todos, uno a uno o ninguno
+  → corrige por severidad, con el test que falla primero en los bugs
+  → ofrece commitear solo el codigo tocado; nunca pr-reviews/
+```
+
+Trae la revisión de **Agent Autolearn** (`GET /v1/branch-review`), así que ve también las que hizo el
+worker de PRs y deja fuera lo que una persona descartó en el panel. Sin perfil o sin red usa el
+ledger local de la rama. Si el código cambió desde la revisión, lo avisa y comprueba cada hallazgo
+antes de tocarlo. Los hallazgos con `decision_externa` (infra, producto) se listan como tareas para
+una persona, no se corrigen con código.
+
+No marca nada como resuelto: la siguiente pasada de `/pre-pr-review` verifica los arreglos y cierra
+los hallazgos. Con el MCP configurado, la herramienta `get_branch_review` devuelve lo mismo.
+
 ## Instalación (cada dev, una vez)
 
 ```
@@ -159,12 +182,15 @@ Usa el checkout de esa rama y conserva su ledger. Si hay cambios locales en otra
 disponible la rama indicada sin mover ni descartar esos cambios.
 
 Revisa el contenido neto de la rama **y** staged, unstaged y untracked no ignorados. Cada corrida deja un archivo nuevo en
-`pr-reviews/pr-<rama>-<hash>/<fecha>-p<N>.md`, versionado con el código: las pasadas sucesivas sobre la misma
-rama quedan una al lado de la otra.
+`pr-reviews/pr-<rama>-<hash>/<fecha>-p<N>.md`, junto al ledger: las pasadas sucesivas sobre la misma
+rama quedan una al lado de la otra. `pr-reviews/` es **local** y va en el `.gitignore`: la revisión se
+comparte por Agent Autolearn y `/fix-review` la lee de ahí. Si la carpeta estaba versionada, la primera
+revisión pregunta si sacarla de git (conserva las copias locales y lo commitea aparte, sin arrastrar
+lo que tengas staged); si no lo estaba, añade la regla al `.gitignore` sin preguntar.
 
 El flujo **solo lee y reporta**: no modifica código ni abre el PR.
 Si hay BLOCKER o HIGH, Claude ofrece corregirlos — pero no toca nada sin que se lo pidas.
-Al terminar pregunta si quieres commitear y pushear la revisión (`pr-reviews/`, nada de código) a la rama.
+Para corregirlos después (o los de una revisión del worker de PRs), `/fix-review [rama]`.
 
 ## Estructura
 
@@ -179,6 +205,7 @@ plugins/agent-autolearn/
     testing/SKILL.md               LEY de tests (los dos stacks)
     resilience/SKILL.md            LEY de resiliencia y edge cases (los dos stacks)
     safe-refactor/SKILL.md         LEY de refactor sin regresiones (los dos stacks)
+    fix-review/SKILL.md            corrige los hallazgos abiertos de la última revisión de una rama
     pre-pr-review/
       SKILL.md                         orquestación: alcance → lanzar → agregar
       references/findings-contract.md  esquema JSON + las 11 reglas duras (lo lee todo revisor)
@@ -196,7 +223,7 @@ plugins/agent-autolearn/
   scripts/review_usage.py              tokens por corrida, orquestador estimado y comparacion
   scripts/aggregate_context.py         todo lo que carga el agregador, en un archivo y un turno
   scripts/retention.py                 limpieza de corridas y snapshots antiguos
-  scripts/review_sync.py               sincronizacion opcional con una API Agent Autolearn (perfiles)
+  scripts/review_sync.py               sincronizacion opcional con una API Agent Autolearn (perfiles); `latest` para /fix-review
   scripts/eval_review.py               evaluaciones con bugs sembrados (evals/)
   agents/                              los 8 revisores + el agregador
 ```
@@ -368,9 +395,9 @@ salida registrada, cache creada/leida, peticiones y ranking por revisor. La marc
 en los prompts vincula cada agente a su corrida; los reintentos se suman sin duplicar callbacks.
 
 El consumo del orquestador se estima aparte (ventana de la conversacion principal entre preparar y
-resumir la corrida): `finish` lo incluye en la copia compartida antes de ofrecer el commit y el hook
+resumir la corrida): `finish` lo incluye en la copia de contadores y el hook
 `Stop` solo refresca el resumen local, sin dejar `pr-reviews/` modificado tras la entrega. El resumen incluye version del plugin, consultas repetidas entre
-revisores y hallazgos; una copia solo con contadores viaja con la rama en `pr-reviews/<rama>/usage/`
+revisores y hallazgos; una copia solo con contadores queda en `pr-reviews/<rama>/usage/`
 y `review_usage.py compare A B` enfrenta dos corridas. `clasificacion.json.metricas` da falsos
 positivos, duplicados fusionados y rondas hasta aprobacion. `shared_checks.py` valida por script
 los hechos de build/tests antes de que otros revisores los reutilicen.

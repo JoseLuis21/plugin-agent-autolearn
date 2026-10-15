@@ -79,6 +79,47 @@ sh "${CLAUDE_PLUGIN_ROOT}/scripts/py.sh" review_sync.py status --repo "$ROOT" --
   terminal, asi que indica en una linea `review_sync.py setup <perfil>` (README, «Sincronizar con Agent Autolearn»)
   y sigue. «No sincronizar» o cualquier fallo de este paso no bloquea la revision.
 
+**Deja `pr-reviews/` fuera de git**, una vez por conversacion y antes de preparar. La revision vive
+en Agent Autolearn y `/fix-review` la lee de ahi (o del ledger local), asi que el ledger y los
+informes son locales: versionarlos ensucia el PR y cada commit de la revision dispara otra revision
+del worker. **Primero mira el estado**, despues decide:
+
+```bash
+git -C "$ROOT" ls-files -- pr-reviews/ | wc -l                       # archivos versionados
+git -C "$ROOT" check-ignore -q --no-index pr-reviews/ && echo ignorada
+git -C "$ROOT" status --porcelain -- .gitignore                       # cambios previos en .gitignore
+```
+
+- **0 versionados y ya ignorada:** nada que hacer.
+- **0 versionados y sin ignorar:** añade `pr-reviews/` al `.gitignore` de la raiz (crealo si no existe;
+  si su ultima linea no termina en salto de linea, añade uno antes) y dilo en una linea. No preguntes.
+- **Con archivos versionados:** pregunta con **AskUserQuestion**: «`pr-reviews/` esta versionada en
+  esta rama (N archivos). ¿La saco de git para que las proximas revisiones queden ignoradas?»:
+  - «Sacarla de git (Recomendado)»: deja de versionarla y la ignora en un commit propio. Las copias
+    locales se conservan: el ledger sigue dando continuidad a las pasadas.
+  - «Solo ignorarla»: añade la regla, pero lo ya versionado sigue en git y seguira mostrando cambios.
+  - «Dejarla como esta»: no toques nada y no vuelvas a preguntar en esta conversacion.
+
+  Con «Sacarla de git», añade la regla como en el caso anterior y commitea **solo** eso en un indice
+  temporal, para no arrastrar lo que el usuario tenga staged. Nunca borres los archivos locales.
+
+  ```bash
+  TMP_INDEX="$(git -C "$ROOT" rev-parse --absolute-git-dir)/pre-pr-review-untrack.index"
+  GIT_INDEX_FILE="$TMP_INDEX" git -C "$ROOT" read-tree HEAD
+  GIT_INDEX_FILE="$TMP_INDEX" git -C "$ROOT" rm -r --cached --quiet -- pr-reviews/
+  GIT_INDEX_FILE="$TMP_INDEX" git -C "$ROOT" add -- .gitignore
+  GIT_INDEX_FILE="$TMP_INDEX" git -C "$ROOT" commit -q -m "chore: deja pr-reviews/ fuera de git"
+  rm -f "$TMP_INDEX"
+  git -C "$ROOT" reset -q -- .gitignore pr-reviews/   # el indice real queda igual que el commit
+  ```
+
+  Si `.gitignore` ya tenia cambios sin commitear, no hagas el commit (arrastraria esos cambios): deja
+  la regla añadida, ejecuta `git -C "$ROOT" rm -r --cached --quiet -- pr-reviews/` y explica que ambos
+  cambios entran en su proximo commit. No hagas push: se sube con el resto de la rama.
+
+Sin AskUserQuestion (por ejemplo, el worker de PRs, que corre desatendido), no toques `.gitignore` ni
+git en este paso: sigue con la revision.
+
 La base es **siempre development**, aunque el PR apunte a main/production o `origin/HEAD`
 apunte a otra rama. Nunca uses main, master, prod ni production como base de revision.
 Actualiza `origin/development` con `git fetch origin development` cuando haya remoto y acceso;
@@ -129,8 +170,8 @@ para lectura a demanda. Nunca copies snapshots de codigo al directorio versionad
 - Si falta el snapshot local, el helper intenta reconstruirlo desde commits disponibles y exige
   el mismo hash. `recovered_from_commit` identifica el commit usado: informa de la recuperacion,
   sin lanzar full ni pedir confirmacion por cambiar de equipo. No necesita IA ni acceso a red.
-  Para compartir continuidad, subir codigo y pr-reviews/ en la misma rama; .pre-pr-review/ sigue
-  local. Un snapshot no recuperable sigue el flujo de cobertura invalida del punto siguiente.
+  `pr-reviews/` y `.pre-pr-review/` son locales: otra maquina empieza con una pasada completa.
+  Un snapshot no recuperable sigue el flujo de cobertura invalida del punto siguiente.
 - Si la rama ya tuvo revision, reutiliza su ledger y snapshot. No reinicies el historial ni
   fuerces un full. Si el helper indica completo por cobertura invalida (rebase, base cambiada,
   ledger antiguo o snapshot perdido), explica el motivo y pregunta antes de lanzar otra revision
@@ -152,7 +193,7 @@ para lectura a demanda. Nunca copies snapshots de codigo al directorio versionad
 
 Los artifacts locales quedan en `.pre-pr-review/<corrida>/`; no borres una corrida al iniciar otra.
 Si hace falta ignorarlos, añade `.pre-pr-review/` a `.gitignore` **antes** de preparar y verifica
-la regla y el salto de linea final. Nunca ignores `pr-reviews/`.
+la regla y el salto de linea final. `pr-reviews/` tambien va ignorada (paso anterior).
 
 ## 2. Lanzar solo los revisores asignados
 
@@ -293,8 +334,8 @@ el informe del agregador. Nunca inventes tokens, uses caracteres como medida ni 
 reporta medicion parcial/N/D: no es cero ni afecta al veredicto de codigo.
 El subtotal cubre revisores y agregador, **no el orquestador**: `finish` estima su consumo aparte
 hasta ese momento y el hook Stop solo refresca el resumen local; no lo calcules ni lo esperes.
-Una copia solo con contadores queda junto al ledger (`pr-reviews/<rama>/usage/`) para compartirla
-con la rama; la escribe `finish` y nada la toca despues, asi entra completa en el commit de la revision. Detalles, consultas repetidas y comparacion de corridas: `references/token-usage.md`.
+Una copia solo con contadores queda junto al ledger (`pr-reviews/<rama>/usage/`); la escribe `finish`
+y nada la toca despues. Detalles, consultas repetidas y comparacion de corridas: `references/token-usage.md`.
 
 Usa el paquete de `finish`. No cargues el informe, clasificacion.json ni historiales para resumir
 algo ya curado; enlaza `run.report` para el detalle.
@@ -312,19 +353,5 @@ incrementales. Una invalidacion real requiere explicar el motivo y obtener la de
 antes de repetir el full; `--full` explicito ya expresa esa decision.
 No commitees codigo ni abras el PR. Si hay HIGH/BLOCKER, ofrece corregirlos; solo con autorizacion.
 
-**Ofrece subir la revision a la rama** tras el resumen, una vez por pasada y solo si el agregador
-termino y `git -C "$ROOT" status --porcelain -- pr-reviews/` muestra cambios. Pregunta con
-**AskUserQuestion**: «¿Quieres commitear y pushear la revision a <rama>?», opciones «Commitear y
-pushear», «Solo commitear» y «No». Con si, añade **solo** `pr-reviews/` (ledger, informe, usage y
-accepted.json); nada de codigo, `.pre-pr-review/` ni `.agent-autolearn.json`. No uses `git add -A`
-ni toques lo que ya estaba staged: commitea con pathspec para no arrastrarlo.
-
-```bash
-git -C "$ROOT" add -- pr-reviews/
-git -C "$ROOT" commit -m "pre-pr-review: pasada p<N> de <rama>" -- pr-reviews/
-git -C "$ROOT" push origin "<rama>"   # solo con «Commitear y pushear»; -u si no tiene upstream
-```
-
-Sin remoto, o si el push se rechaza por divergencia, no hagas pull, rebase ni force: deja el commit
-local y explicalo en una linea. `pr-reviews/` esta fuera del delta, asi que el commit no abre otra
-pasada. Sin AskUserQuestion, pregunta en texto; sin respuesta afirmativa, no commitees.
+**No commitees `pr-reviews/`.** La revision ya esta en Agent Autolearn (si el repo sincroniza) y en el
+ledger local. Para corregir los hallazgos, sugiere `/fix-review <rama>`.

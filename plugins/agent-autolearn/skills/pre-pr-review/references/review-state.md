@@ -110,8 +110,9 @@ El mismo contenido dirty o despues de commit da el mismo tree: no hay agentes sa
 
 ### Continuidad entre desarrolladores
 
-Comparte la misma rama con codigo y `pr-reviews/` mediante push/pull normales. No publiques
-`.pre-pr-review/` ni refs especiales. Si falta coverage.tree, el helper filtra el commit
+`pr-reviews/` y `.pre-pr-review/` son locales e ignorados: la revision se comparte por Agent
+Autolearn (`review_sync.py latest`, `/fix-review`), no por git. No publiques refs especiales. Un ledger
+heredado de cuando `pr-reviews/` se versionaba sigue sirviendo mientras este en el checkout. Si falta coverage.tree, el helper filtra el commit
 coverage.head y hasta 50 descendientes recientes en la historia local hacia HEAD. Solo acepta
 un arbol cuyo hash sea exactamente coverage.tree y lo conserva bajo una ref local de snapshots.
 No descarga commits automaticamente, no modifica el indice/worktree ni reescribe el ledger.
@@ -125,8 +126,8 @@ filtros nunca autoriza a aceptar un arbol aproximado.
 Cambios dirty revisados sirven si despues quedaron en un commit candidato identico. Si no se
 compartieron, falta historia por un clone shallow, cambio la base, hubo rebase o no se encuentra
 coincidencia dentro del limite, conserva hallazgos y explica la necesidad de full antes de lanzarlo.
-No se trasladan transcripts ni consultas entre equipos. Del uso de tokens viaja solo el resumen
-de contadores de `pr-reviews/<rama>/usage/` (ver `token-usage.md`).
+No se trasladan transcripts ni consultas entre equipos. El resumen de contadores de tokens queda en
+`pr-reviews/<rama>/usage/` (ver `token-usage.md`) y el diagnostico viaja a Agent Autolearn.
 
 ## Resultados del revisor
 

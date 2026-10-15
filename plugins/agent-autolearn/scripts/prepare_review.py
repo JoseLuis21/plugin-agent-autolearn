@@ -18,7 +18,7 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 
-from ledger import ReviewError, load_ledger, read_json, atomic_json, digest_file, reviewer_result
+from ledger import ReviewError, ledger_location, load_ledger, read_json, atomic_json, digest_file, reviewer_result
 from scan_conventions import parse_added_lines, scan
 from scan_client_server import CODE_EXT, batch_reader, scan as scan_boundary
 
@@ -456,10 +456,8 @@ def prepare(args):
     branch = output(repo, 'symbolic-ref', '--quiet', '--short', 'HEAD', check=False) or f'detached-{head[:12]}'
     base = development_base(repo, args.base)
     merge_base = output(repo, 'merge-base', base, head)
-    slug = 'pr-' + re.sub(r'[^A-Za-z0-9._-]', '-', branch)
-    branch_key = hashlib.sha256(branch.encode()).hexdigest()[:12]
-    ledger_path = Path(args.ledger).resolve() if args.ledger else repo / 'pr-reviews' / f'{slug}-{branch_key}' / 'ledger.json'
-    legacy_path = repo / 'pr-reviews' / slug / 'ledger.json'
+    default_path, legacy_path = ledger_location(repo, branch)
+    ledger_path = Path(args.ledger).resolve() if args.ledger else default_path
     if not args.ledger and not ledger_path.exists() and legacy_path.exists():
         legacy = load_ledger(legacy_path)
         if legacy.get('rama') == branch:

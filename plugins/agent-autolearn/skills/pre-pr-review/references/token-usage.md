@@ -40,7 +40,7 @@ Es una **estimacion** y se reporta aparte (`orchestrator`, `orchestrator_tokens`
 y una corrida `unchanged` o interrumpida antes de lanzar agentes no se atribuye. `partial` indica
 ventana sin cerrar o contadores incompletos. `observed_tokens` sigue siendo solo revisores y
 agregador. `finish` la calcula con el transcript de la sesion (`CLAUDE_CODE_SESSION_ID`) y la incluye
-en la copia de `pr-reviews/<rama>/usage/` antes de ofrecer el commit. El hook Stop la actualiza al final
+en la copia de `pr-reviews/<rama>/usage/` al terminar la corrida. El hook Stop la actualiza al final
 del turno solo en el resumen local y en la sincronizacion: nunca reescribe `pr-reviews/`, para no dejar
 cambios sin commitear tras la entrega. Sin sesion localizable, la copia compartida queda sin orquestador.
 
@@ -70,7 +70,7 @@ Incluye `plugin_version`, `tree`/`since_tree`, el resumen de hallazgos de `clasi
 mas de un revisor). Es un diagnostico posterior: ningun revisor espera ni omite evidencia por el.
 
 Una copia identica, solo con contadores y sin rutas locales, se escribe en
-`pr-reviews/<rama>/usage/p<pasada>-<corrida>.json` para viajar con la rama (`--no-share` la evita).
+`pr-reviews/<rama>/usage/p<pasada>-<corrida>.json`, local como el resto de `pr-reviews/` (`--no-share` la evita).
 Un archivo por corrida: no genera conflictos entre desarrolladores ni entra en el snapshot.
 
 ```bash

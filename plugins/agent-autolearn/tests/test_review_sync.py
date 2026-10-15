@@ -34,6 +34,7 @@ class FakeApi:
         self.idem = {}
         self.repos, self.versions, self.runs, self.usage, self.diagnostics = {}, {}, {}, {}, {}
         self.decisions, self.decision_queries = [], []
+        self.branch_review, self.branch_queries = None, []
         self.lock = threading.Lock()
 
     def created(self, kind):
@@ -60,6 +61,9 @@ class FakeApi:
             return resp
 
     def route(self, method, path, headers, body):
+        if path.startswith('/v1/branch-review?'):
+            self.branch_queries.append(path)
+            return 200, self.branch_review or {'repository': None, 'run': None, 'open_findings': []}, {}
         if path.startswith('/v1/finding-decisions?'):
             self.decision_queries.append(path)
             return 200, {'repository_id': 'repo_1', 'data': self.decisions}, {}
@@ -295,6 +299,67 @@ class ReviewSyncTests(unittest.TestCase):
         with redirect_stdout(out), redirect_stderr(err):
             code = review_sync.main(['pull', '--repo', str(repo.root), '--timeout', '3'])
         return code, out.getvalue(), err.getvalue()
+
+    def latest(self, repo, *extra):
+        from contextlib import redirect_stderr, redirect_stdout
+        from io import StringIO
+        out, err = StringIO(), StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = review_sync.main(['latest', '--repo', str(repo.root), '--timeout', '3', *extra])
+        return code, (json.loads(out.getvalue()) if out.getvalue() else None)
+
+    def write_ledger(self, repo, branch, findings):
+        import ledger
+        path, _ = ledger.ledger_location(repo.root, branch)
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({'schema_version': 2, 'rama': branch, 'pasadas': [{'n': 1, 'sha': 'a' * 40, 'modo': 'completo', 'informe': 'p1.md'}],
+                                    'hallazgos': findings}))
+
+    def ledger_finding(self, fp, severity='HIGH', estado='abierto', **extra):
+        return {'huella': fp, 'severidad': severity, 'estado': estado, 'titulo': f'titulo {fp}', 'categoria': 'api', 'archivo': 'a.go',
+                'simbolo': 'X', 'linea': 3, 'evidence': 'x', 'why': 'y', 'fix': 'z', **extra}
+
+    def test_latest_asks_agent_autolearn_for_the_current_branch(self):
+        repo = self.pull_repo()
+        self.api.branch_review = {'repository': {'id': 'repo_1'}, 'branch': 'feature', 'run': {'id': 'run_9', 'head_commit': 'b' * 40},
+                                  'open_findings': [{'fingerprint': 'fp-1', 'severity': 'HIGH'}], 'counts': {'open': 1}}
+        code, data = self.latest(repo)
+        self.assertEqual(code, 0)
+        from urllib.parse import parse_qs, urlsplit
+        query = parse_qs(urlsplit(self.api.branch_queries[0]).query)
+        self.assertEqual(query['branch'], ['feature'], 'sin --branch usa la rama actual')
+        self.assertEqual(query['remote'], [review_sync.normalize_remote('git@github.com:Acme/Shop.git')])
+        self.assertEqual((data['source'], data['profile'], data['run']['id']), ('agent-autolearn', 'personal', 'run_9'))
+        self.assertEqual(data['open_findings'][0]['fingerprint'], 'fp-1')
+
+        self.latest(repo, '--branch', 'feature/otra')
+        self.assertEqual(parse_qs(urlsplit(self.api.branch_queries[1]).query)['branch'], ['feature/otra'])
+
+    def test_latest_falls_back_to_the_local_ledger(self):
+        repo = self.pull_repo()
+        self.write_ledger(repo, 'feature', [
+            self.ledger_finding('fp-med', severity='MEDIUM'), self.ledger_finding('fp-high'),
+            self.ledger_finding('fp-closed', estado='cerrado'), self.ledger_finding('fp-merged', merged_into='fp-high')])
+        self.api.fail.append(('GET', '/v1/branch-review', 503, 10))
+        code, data = self.latest(repo)
+        self.assertEqual(code, 0, 'un fallo de red no impide trabajar con el ledger')
+        self.assertEqual(data['source'], 'ledger')
+        self.assertEqual([f['fingerprint'] for f in data['open_findings']], ['fp-high', 'fp-med'], 'solo abiertos, por severidad')
+        self.assertEqual(data['counts'], {'open': 2, 'blocking_open': 1, 'by_severity': {'HIGH': 1, 'MEDIUM': 1}})
+        self.assertEqual(data['run']['head_commit'], 'a' * 40)
+        self.assertTrue(any('No se pudo consultar' in n for n in data['notes']))
+
+        self.api.fail.clear()
+        code, data = self.latest(repo)
+        self.assertEqual(data['source'], 'ledger', 'si el panel no tiene revisiones de la rama, tambien vale el ledger')
+
+    def test_latest_without_profile_or_review_reports_nothing(self):
+        repo = ReviewRepo(self, self.temp / 'repo-latest-off')
+        repo.git('remote', 'add', 'origin', 'git@github.com:Acme/Shop.git')
+        code, data = self.latest(repo)
+        self.assertEqual(code, 0)
+        self.assertEqual((data['source'], data['run'], data['open_findings']), (None, None, []))
+        self.assertEqual(self.api.branch_queries, [], 'sin perfil no hay red')
 
     def test_pull_accepts_human_dismissals_with_their_severity_as_ceiling(self):
         import ledger

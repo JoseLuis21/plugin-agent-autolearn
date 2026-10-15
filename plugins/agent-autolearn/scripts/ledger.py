@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 import time
@@ -71,6 +72,14 @@ def atomic_json(path, data):
 def require(condition, message):
     if not condition:
         raise ReviewError(message)
+
+
+def ledger_location(repo, branch):
+    """(ledger, ledger legado) de una rama: pr-reviews/pr-<slug>-<sha256(rama)[:12]>/ y el antiguo pr-reviews/pr-<slug>/."""
+    slug = 'pr-' + re.sub(r'[^A-Za-z0-9._-]', '-', branch)
+    branch_key = hashlib.sha256(branch.encode()).hexdigest()[:12]
+    reviews = Path(repo) / 'pr-reviews'
+    return reviews / f'{slug}-{branch_key}' / 'ledger.json', reviews / slug / 'ledger.json'
 
 
 def load_ledger(path):

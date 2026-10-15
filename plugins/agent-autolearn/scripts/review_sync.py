@@ -11,6 +11,7 @@ Uso:
   review_sync.py enqueue RUN_DIR [--quiet]                           # solo local, sin red
   review_sync.py push [--repo DIR] [--timeout 10] [--retry-failed] [--quiet]
   review_sync.py pull [--repo DIR] [--timeout 5] [--quiet]          # descartes humanos del panel -> pr-reviews/accepted.json
+  review_sync.py latest [--repo DIR] [--branch RAMA]                # ultima revision de la rama y sus hallazgos abiertos (JSON)
   review_sync.py mcp [PERFIL] [--name agent-autolearn] [--scope user|local]
                                    # registra el MCP en Claude Code con el token del perfil (sin argumento: el del repo)
   review_sync.py mcp-headers [--profile NOMBRE]                     # headersHelper: imprime la cabecera Authorization
@@ -44,7 +45,7 @@ from datetime import datetime, timezone
 
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
-from ledger import huella  # noqa: E402  Misma huella que el ledger.
+from ledger import ReviewError, huella, ledger_location, load_ledger  # noqa: E402  Misma huella y ruta que el ledger.
 
 PLUGIN_ROOT_DEFAULT = SCRIPTS.parent
 NS = uuid.uuid5(uuid.NAMESPACE_URL, 'agent-autolearn/review-run')
@@ -1221,6 +1222,81 @@ def cmd_pull(args):
         print(json.dumps({'accepted': str(path), 'from_panel': total, 'added': added, 'removed': removed}, ensure_ascii=False))
 
 
+# ---------- ultima revision de una rama (para /fix-review) ----------
+
+def current_branch(repo):
+    return git(repo, 'symbolic-ref', '--quiet', '--short', 'HEAD')
+
+
+def local_review(repo, branch):
+    """Hallazgos abiertos del ledger local de la rama, con la misma forma que GET /v1/branch-review. None si no hay."""
+    path, legacy = ledger_location(repo, branch)
+    if not path.exists() and legacy.exists():
+        path = legacy
+    if not path.exists():
+        return None
+    try:
+        data = load_ledger(path)
+    except ReviewError as exc:
+        raise SyncError(f'{path} no es un ledger valido: {exc}') from exc
+    if data.get('rama') not in (None, branch):
+        return None
+    passes = sorted(data['pasadas'], key=lambda p: p['n'])
+    last = passes[-1] if passes else {}
+    rank = {s: i for i, s in enumerate(reversed(SEVERITIES))}
+    open_findings = [h for h in data['hallazgos'] if h.get('estado') == 'abierto' and not h.get('merged_into')]
+    open_findings.sort(key=lambda h: (rank.get(h.get('severidad'), len(rank)), h.get('archivo') or '', h['huella']))
+    by_severity = {}
+    for h in open_findings:
+        by_severity[h['severidad']] = by_severity.get(h['severidad'], 0) + 1
+    return {
+        'source': 'ledger', 'ledger': str(path), 'repository': None, 'branch': branch,
+        'run': {'id': None, 'head_commit': last.get('sha'), 'pass_number': last.get('n'), 'mode': last.get('modo'), 'report': last.get('informe')},
+        'latest_attempt': None,
+        'open_findings': [{
+            'fingerprint': h['huella'], 'severity': h['severidad'], 'category': h.get('categoria'), 'title': h.get('titulo'),
+            'file': h.get('archivo'), 'symbol': h.get('simbolo'), 'line': h.get('linea'), 'evidence': h.get('evidence'),
+            'why': h.get('why'), 'fix': h.get('fix'), 'confidence': h.get('confidence'), 'pass_status': h.get('estado_pasada'),
+            'external_decision': h.get('decision_externa'), 'human_judgment': None,
+        } for h in open_findings],
+        'settled_by_humans': [],
+        'counts': {'open': len(open_findings), 'blocking_open': sum(1 for h in open_findings if h['severidad'] in ('HIGH', 'BLOCKER')),
+                   'by_severity': by_severity},
+    }
+
+
+def cmd_latest(args):
+    """Ultima revision de una rama y sus hallazgos abiertos, como JSON. Primero Agent Autolearn (ve tambien lo que
+    revisaron otros, p. ej. el worker de PRs, y quita lo que una persona descarto en el panel); si no hay perfil o la
+    API no responde, el ledger local de la rama."""
+    repo = repo_root(args.repo)
+    branch = args.branch or current_branch(repo)
+    if not branch:
+        raise SyncError('HEAD no esta en una rama: indica --branch.')
+    notes = []
+    name, _ = resolve_profile(repo)
+    profile = profile_config(name)
+    remote = normalize_remote(git(repo, 'remote', 'get-url', 'origin'))
+    if profile and remote:
+        try:
+            query = urllib.parse.urlencode({'remote': remote, 'branch': branch})
+            _, data, _ = Client(profile, args.timeout, backoff=0).request('GET', '/v1/branch-review?' + query)
+            if data.get('run'):
+                print(json.dumps({'source': 'agent-autolearn', 'profile': name, **data, 'notes': notes}, ensure_ascii=False))
+                return
+            notes.append(f'Agent Autolearn (perfil {name}) no tiene revisiones de {branch} en {remote}.')
+        except (HttpError, Transient) as exc:
+            notes.append(f'No se pudo consultar Agent Autolearn ({exc.message() if isinstance(exc, HttpError) else exc}).')
+    else:
+        notes.append('Sin perfil activo o sin remoto origin: no se consulta Agent Autolearn.')
+    local = local_review(repo, branch)
+    if local:
+        print(json.dumps({**local, 'notes': notes}, ensure_ascii=False))
+        return
+    print(json.dumps({'source': None, 'branch': branch, 'run': None, 'open_findings': [],
+                      'notes': notes + [f'Tampoco hay ledger local de {branch}.']}, ensure_ascii=False))
+
+
 # ---------- MCP ----------
 
 def origin(url):
@@ -1338,6 +1414,11 @@ def main(argv=None):
     p.add_argument('--timeout', type=float, default=5.0)
     p.add_argument('--quiet', action='store_true')
     p.set_defaults(fn=cmd_pull)
+    p = sub.add_parser('latest')
+    p.add_argument('--repo', default='.')
+    p.add_argument('--branch')
+    p.add_argument('--timeout', type=float, default=10.0)
+    p.set_defaults(fn=cmd_latest)
     p = sub.add_parser('mcp')
     p.add_argument('profile', nargs='?')
     p.add_argument('--name', default='agent-autolearn')
