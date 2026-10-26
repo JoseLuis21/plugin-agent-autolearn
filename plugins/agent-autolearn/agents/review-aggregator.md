@@ -66,6 +66,10 @@ juntas en un turno, no una por turno. Menos turnos, la misma evidencia.
   anterior se vuelve a descartar con su motivo, salvo que la fuente aporte `new_evidence` que lo
   refute; entonces queda open conservando ese campo. `ledger.py` rechaza reabrirlo sin el. No lo
   descartes por costumbre: comprueba que el motivo sigue siendo cierto en el codigo actual.
+- **Aceptaciones sin huella cruda** (seccion «Aceptaciones de pr-reviews/accepted.json» del contexto).
+  Una persona acepto ese hallazgo, pero el revisor lo nombro con otra category o symbol y la huella
+  cambio. Si tu decision es la misma causa raiz, pon la huella aceptada en sus `aliases`: `ledger.py`
+  aplica la aceptacion con su techo. Si es otra causa, no la alies: queda abierta.
 - **Verifica pendientes por huella**, con el resultado explicito del dueño. Ni ausencia de un
   finding, ni archivo tocado, ni revisar una funcion demuestran cierre. Si discrepas del dueño,
   pide la correccion con evidencia antes de finalizar; no inventes una verificacion.

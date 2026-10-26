@@ -145,7 +145,7 @@ def reviewer_result(run_dir, reviewer, required):
     return findings, verifications
 
 
-def validate_inputs(run, ledger, curated, run_dir):
+def validate_inputs(run, ledger, curated, run_dir, accepted=None):
     from prepare_review import REVIEWERS
     require(run.get('schema_version') == 2 and run.get('status') == 'prepared', 'Run is not ready for finalization.')
     expected = run.get('expected_reviewers')
@@ -178,7 +178,8 @@ def validate_inputs(run, ledger, curated, run_dir):
         final_verifications[fingerprint] = verification
     require(set(final_verifications) == assigned, 'Curation omits assigned verifications.')
     decisions, used_sources, used_aliases = [], set(), {}
-    known = set(raw) | set(previous) | set(ledger.get('aliases', {}))
+    # An accepted fingerprint is known even with no ledger record: a fresh checkout only has accepted.json.
+    known = set(raw) | set(previous) | set(ledger.get('aliases', {})) | set(accepted or {})
     canonical_seen = set()
     for finding in curated['findings']:
         natural = validate_finding(finding, 'curation')
@@ -444,8 +445,8 @@ def finalize_locked(args, run_dir, run):
     require(digest_file(ledger_path) == run.get('ledger_digest'), 'Ledger changed since preparation; prepare a new run.')
     require(run.get('pass_n') == max((p['n'] for p in old['pasadas']), default=0) + 1, 'Stale/invalid pass number.')
     curated = read_json(args.curated)
-    decisions, verifications = validate_inputs(run, old, curated, run_dir)
     accepted = accepted_map(args.accepted or Path(run['repo']) / 'pr-reviews' / 'accepted.json')
+    decisions, verifications = validate_inputs(run, old, curated, run_dir, accepted)
     require(output(run['repo'], 'rev-parse', 'HEAD') == run['head'], 'HEAD changed during review; prepare again.')
     require(output(run['repo'], 'merge-base', run['base'], 'HEAD') == run['merge_base'], 'Base changed during review; prepare again.')
     require(snapshot_tree(run['repo']) == run['tree'], 'Worktree changed during review; prepare again.')

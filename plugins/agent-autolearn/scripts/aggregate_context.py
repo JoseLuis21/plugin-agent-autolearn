@@ -32,7 +32,8 @@ Cada entrada de findings es una DECISION sobre una o varias huellas crudas:
   sources       huellas crudas que cubre esta decision. Cada huella cruda aparece en EXACTAMENTE una decision,
                 tambien los falsos positivos (como discarded). Fusionar = varias huellas en sources.
   detectado_por exactamente los revisores de esas sources; reviewer = uno de ellos (el dueño principal)
-  aliases       opcional: huellas historicas/del ledger de la misma causa raiz (las sources se añaden solas)
+  aliases       opcional: huellas historicas/del ledger/de accepted.json de la misma causa raiz (las sources se
+                añaden solas)
   new_evidence  obligatorio para dejar open algo que el ledger tiene descartado (ver "Ledger previo")
   introducido_por   opcional: {fingerprint previo, before, after, causal_evidence}; solo con prueba causal
 
@@ -63,6 +64,33 @@ def wrap(label, text):
 def compact(value, limit=WIDTH):
     text = json.dumps(value, ensure_ascii=False)
     return textwrap.wrap(text, limit, break_long_words=True, break_on_hyphens=False) or ['']
+
+
+def acceptances(run, raw, draft):
+    """Acceptances whose fingerprint no raw finding carries, in files this run reports on.
+    A reviewer may name the same cause with another category; only the aggregator can tell it is the same."""
+    data = optional(Path(run['repo']) / 'pr-reviews' / 'accepted.json', {}) or {}
+    entries = data.get('aceptados') if isinstance(data, dict) else None
+    files = {f.get('file') for found in draft.values() for f in found}
+    out = []
+    for entry in entries if isinstance(entries, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        ref = entry.get('ref') if isinstance(entry.get('ref'), dict) else {}
+        category, file, symbol = (entry.get(k) or ref.get(r) for k, r in (('categoria', 'category'), ('archivo', 'file'), ('simbolo', 'symbol')))
+        fp = entry.get('huella') or (huella(category, file, symbol) if category and file and symbol else None)
+        if not fp or fp in raw or file not in files:
+            continue
+        out.extend(compact({'huella': fp, 'categoria': category, 'archivo': file, 'simbolo': symbol,
+                            'techo_severidad': entry.get('techo_severidad', 'MEDIUM'), 'motivo': entry.get('motivo'),
+                            'autor': entry.get('autor'), 'origen': entry.get('origen')}))
+    if not out:
+        return []
+    return ['', '### Aceptaciones de pr-reviews/accepted.json en estos archivos', '',
+            *textwrap.wrap('Una persona ya acepto estos hallazgos («no es un problema»), pero ninguna huella cruda coincide. '
+                           'Si una decision es la misma causa raiz con otra category o symbol, pon la huella aceptada en sus '
+                           'aliases: el ledger aplica la aceptacion con su techo. Si es otra causa, no la alies.',
+                           WIDTH, break_long_words=False, break_on_hyphens=False), *out]
 
 
 def build(run_dir):
@@ -174,6 +202,7 @@ def build(run_dir):
         out.extend(['', '### discarded.json', ''])
         for item in dismissed.get('discarded') or []:
             out.extend(compact(item))
+    out.extend(acceptances(run, raw, draft))
 
     out.extend(['', '## Consultas registradas por los revisores', ''])
     for path in sorted((run_dir / 'searches').glob('*.json')):

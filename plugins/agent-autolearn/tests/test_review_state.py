@@ -732,6 +732,26 @@ class ReviewStateTests(unittest.TestCase):
                 self.assertEqual(result['resumen']['suprimidos_por_aceptado'], 0)
                 self.assertNotIn('aceptado', record)
 
+    def test_panel_acceptance_applies_when_a_first_pass_names_the_same_cause_differently(self):
+        # A fresh checkout has no ledger: the dismissed fingerprint is only in accepted.json.
+        repo = self.repo()
+        dismissed = finding(category='deploy-order-env-dependency', severity='HIGH')
+        renamed = finding(category='env-config-rollout', severity='HIGH')
+        repo.write_json(repo.root / 'pr-reviews/accepted.json', {'aceptados': [{
+            'huella': fingerprint(dismissed), 'techo_severidad': 'HIGH', 'origen': 'agent-autolearn',
+            'ref': {k: dismissed[k] for k in ('category', 'file', 'symbol')}}]})
+        repo.write('app.py', 'value = 1\n')
+        run = repo.prepare()
+        curated = repo.results(run, raw={'code-reviewer': [renamed]})
+        curated['findings'][0]['aliases'] = [fingerprint(dismissed)]
+        repo.write_json(Path(run['run_dir']) / 'curated.json', curated)
+        result = repo.finalize(run)
+        record = repo.records(run)[fingerprint(renamed)]
+        self.assertEqual(record['estado'], 'aceptado')
+        self.assertEqual(record['aceptado']['huella'], fingerprint(dismissed))
+        self.assertEqual(result['resumen']['suprimidos_por_aceptado'], 1)
+        self.assertEqual(result['resumen']['severity_counts']['HIGH'], 0)
+
     def test_alias_chain_preserves_acceptance_and_history_after_reload(self):
         repo = self.repo()
         a, b, c = (finding(name) for name in ('alias_a', 'alias_b', 'alias_c'))

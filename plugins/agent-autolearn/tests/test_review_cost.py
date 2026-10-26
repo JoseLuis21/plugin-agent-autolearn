@@ -257,6 +257,28 @@ class AggregateContextTests(unittest.TestCase):
             result = repo.finalize(run)
             self.assertTrue(result['resumen']['coverage_complete'])
 
+    def test_acceptances_no_raw_fingerprint_matches_are_shown_for_the_reported_files(self):
+        from test_review_state import finding, fingerprint
+        with tempfile.TemporaryDirectory(prefix='review-cost-') as temp:
+            repo = ReviewRepo(self, Path(temp) / 'repo')
+            dismissed = finding(category='deploy-order-env-dependency', severity='HIGH')
+            elsewhere = finding(file='other.py')
+            reported = finding(category='env-config-rollout', severity='HIGH')
+            repo.write_json(repo.root / 'pr-reviews/accepted.json', {'aceptados': [
+                {'huella': fingerprint(dismissed), 'techo_severidad': 'HIGH', 'motivo': 'Ya existen en dev.',
+                 'origen': 'agent-autolearn', 'ref': {k: dismissed[k] for k in ('category', 'file', 'symbol')}},
+                {'categoria': elsewhere['category'], 'archivo': elsewhere['file'], 'simbolo': elsewhere['symbol']},
+                {'huella': fingerprint(reported), 'techo_severidad': 'HIGH'}]})
+            repo.write('app.py', 'value = 1\n')
+            run = repo.prepare()
+            repo.results(run, raw={'code-reviewer': [reported]})
+            text = Path(self.build(run['run_dir'])['context']).read_text()
+            section = text.split('### Aceptaciones de pr-reviews/accepted.json en estos archivos', 1)[1].split('\n## ', 1)[0]
+            self.assertIn(fingerprint(dismissed), section)
+            self.assertIn('Ya existen en dev.', section)
+            self.assertNotIn(fingerprint(elsewhere), section, 'otro archivo: no aplica')
+            self.assertNotIn(fingerprint(reported), section, 'la misma huella ya la aplica el ledger')
+
     def test_missing_results_are_reported_and_a_broken_run_never_crashes_the_agent(self):
         with tempfile.TemporaryDirectory(prefix='review-cost-') as temp:
             repo = ReviewRepo(self, Path(temp) / 'repo')

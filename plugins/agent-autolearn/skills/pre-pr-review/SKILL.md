@@ -149,7 +149,8 @@ sh "${CLAUDE_PLUGIN_ROOT}/scripts/py.sh" prepare_review.py --repo "$ROOT"
 ```
 
 `pull` trae de Agent Autolearn lo que una persona descarto («no es un problema») y lo deja en
-`pr-reviews/accepted.json` con techo = la severidad que tenia, asi no vuelve como pendiente. Sin perfil,
+`pr-reviews/accepted.json` con techo = la severidad que tenia, asi no vuelve como pendiente. Si un revisor
+lo vuelve a reportar con otra huella, el agregador lo ve en su contexto y usa la huella aceptada como alias. Sin perfil,
 sin red o con la API caida no toca nada y no es un error: sigue con prepare. Si imprime algo, menciona
 en la entrega cuantas aceptaciones llegaron o se retiraron.
 

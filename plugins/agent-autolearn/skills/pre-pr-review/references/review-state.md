@@ -176,7 +176,8 @@ why/fix/confidence/decision_externa), mas:
   `discard_blob` y, al reabrirse, `reabierto_tras_descarte`.
 - `reviewer`: identidad principal; `detectado_por`: lista de identidades de todas sus fuentes.
 - `sources`: huellas de los findings originales que esta decision cubre, sin omitir ni duplicar.
-- `aliases`: opcional, huellas originales o historicas que se fusionan por causa raiz. Las sources
+- `aliases`: opcional, huellas originales o historicas que se fusionan por causa raiz, tambien una huella
+  de `accepted.json` sin registro en el ledger (la aceptacion se aplica por el alias). Las sources
   tambien se registran como aliases si difieren de la identidad canonica.
 - `introducido_por`: opcional, objeto con fingerprint previo, before, after y causal_evidence.
   No se rellena por compartir funcion o archivo. Si no se prueba, omitirlo.
