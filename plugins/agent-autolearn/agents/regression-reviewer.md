@@ -44,6 +44,16 @@ todos los simbolos sin cambio semantico ni enumeres deuda preexistente para llen
 - `NOT NULL` o `UNIQUE` nuevo sobre datos existentes que no lo cumplen. ¿La migracion corre en una base con datos reales?
 - Migracion sin `down`, o irreversible sin decirlo.
 - Cambio de tipo de columna que trunca.
+- **Cambio de esquema sin declarar.** Los cambios de base se aplican a mano. Si el repo no tiene un sistema
+  de migraciones propio (`database/migrations/` de Laravel, `migrations/` con runner, Prisma, goose…) y el
+  codigo nuevo usa una tabla, columna o indice que no existe en la rama base, el PR debe traer
+  `db/changes/<YYYY-MM-DD>-<descripcion>.sql` con el DDL exacto. Sin ese archivo es `HIGH`: el deploy falla
+  contra una base que no lo tiene y nadie sabe que hay que crearlo. El fix es el archivo con el
+  `ALTER`/`CREATE` concreto. Para demostrar que el objeto es nuevo, busca en la base su DDL o un uso previo
+  (`git grep` sobre el merge base); si no puedes demostrarlo, confianza `baja`.
+- **`db/changes/` incompleto o mal ubicado.** Si el archivo existe, comprueba que declara todo lo que el
+  codigo nuevo usa, una sentencia por `;`. Un `DROP` va en el archivo pero se aplica despues del deploy:
+  si el codigo desplegado todavia lee esa columna, es la regresion de la primera linea de esta lista.
 
 **Comportamiento por defecto**
 - Valor por defecto cambiado: todo lo que no lo especificaba se comporta distinto.

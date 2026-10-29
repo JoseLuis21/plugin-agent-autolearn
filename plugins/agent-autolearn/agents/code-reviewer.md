@@ -53,7 +53,9 @@ prompt — la ventana del hunk primero, el archivo completo cuando el juicio dep
 Cuando run.json omite un especialista con motivo de delegacion, tambien cubres:
 
 - edge-case: null/vacio, limites, errores, timeout/concurrencia si hay superficie.
-- regression: firmas, defaults, contratos y callers afectados por el cambio; consulta dirigida.
+- regression: firmas, defaults, contratos y callers afectados por el cambio; consulta dirigida. Incluye
+  tablas, columnas o indices nuevos sin su `db/changes/<fecha>-<descripcion>.sql` (regla completa en
+  `agents/regression-reviewer.md`, "Datos y migraciones").
 - test: prueba que protege el comportamiento cambiado y que fallaria antes del fix.
 
 Lee solo las secciones relevantes de resilience, safe-refactor y testing, y declara
