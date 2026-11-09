@@ -51,7 +51,7 @@ ni backticks.
 | `mysql_schema` | un nombre, o `{"secret", "key"}` | El schema que usa | Si el repo usa MySQL |
 
 - Las claves de primer nivel son los entornos del worker (`READINESS_ENVIRONMENTS`; por defecto `dev`
-  para `development` y `prod` para `main`).
+  para la rama `development` y `prod` para la rama `production`).
 - Omite los tipos que el repo no usa. Una variable cuenta como presente si **cualquier** fuente la
   tiene, asi que listar de mas no bloquea: lista lo que el codigo desplegado lee de verdad.
 - Un entorno sin fuentes se declara vacio: `"prod": {}`.
@@ -158,5 +158,5 @@ Comprueba ademas, a mano, lo que el worker rechaza: claves desconocidas, `ecs_se
 
 Resume en pocas lineas: fuentes por entorno, que quedo como `<FILL_ME>` y por que, y el siguiente
 paso. El worker lee el archivo **de la rama destino del PR**: tiene que llegar a `development` y a
-`main` (o via el PR que lo agrega, que se verifica con su propio archivo sin bloquear). Ofrece hacer
+`production` (o via el PR que lo agrega, que se verifica con su propio archivo sin bloquear). Ofrece hacer
 commit solo si el usuario lo pide.
