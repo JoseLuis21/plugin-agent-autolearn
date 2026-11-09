@@ -11,6 +11,7 @@ Un solo plugin con dos cosas que se apoyan la una en la otra:
 | **Skills de arquitectura** | La ley de cada stack, en `skills/development-*` | Mientras escribes código. Claude las carga solo al detectar el stack |
 | **`/pre-pr-review`** | Revisión multi-agente del diff | Antes de abrir el PR. Verifica **esas mismas leyes** |
 | **`/fix-review`** | Corrige los hallazgos abiertos de la última revisión de una rama | Después de una revisión, local o del worker de PRs |
+| **`/readiness-file`** | Crea o rellena el `.deploy-readiness.json` del repo | Cuando el chequeo deploy readiness del worker bloquea un PR por falta del archivo |
 
 La ley se escribe una vez y sirve para las dos cosas: quien programa la lee para hacerlo bien, y el
 revisor la lee para comprobarlo. No hay dos versiones que se puedan separar.
@@ -122,6 +123,25 @@ si hay candidatos o pendientes y confirma cada hit leyendo el archivo real. Las 
 Para ajustar las listas de palabras o de patrones, edita `scripts/scan_conventions.py`;
 para ajustar las excepciones, `agents/convention-reviewer.md`.
 
+### `/readiness-file`
+
+Arma el `.deploy-readiness.json` que el chequeo deploy readiness del worker de PRs lee desde la rama
+destino: por entorno, las Lambdas, secretos, servicios ECS, reglas, schedules y schema MySQL de donde
+el código desplegado saca sus variables.
+
+```text
+/readiness-file
+  → lee el archivo si existe (rellena la plantilla <FILL_ME> que sube el worker)
+  → lee los archivos de despliegue: template.yaml, serverless, buildspec, Dockerfile, task definitions, .env.example
+  → con AWS CLI: pregunta el perfil y lista recursos por nombre (lambda, secretsmanager, ecs, events, scheduler)
+  → separa DEV y PROD por nombre y pistas del repo; lo que no puede confirmar queda como <FILL_ME>
+  → muestra cada fuente con su evidencia, pregunta y escribe el archivo; commit solo si se pide
+```
+
+AWS se usa **solo en lectura y solo con nombres**: nunca `get-secret-value` ni los valores de las
+variables de una Lambda (solo sus claves). Sin AWS CLI, o sin credenciales, arma el archivo con lo que
+el repo dice y marca el resto como `<FILL_ME>`, que el worker rechaza hasta que se complete.
+
 ### `/fix-review`
 
 Corrige lo que dejó abierto la última revisión de una rama, sin copiar informes a mano.
@@ -206,6 +226,7 @@ plugins/agent-autolearn/
     resilience/SKILL.md            LEY de resiliencia y edge cases (los dos stacks)
     safe-refactor/SKILL.md         LEY de refactor sin regresiones (los dos stacks)
     fix-review/SKILL.md            corrige los hallazgos abiertos de la última revisión de una rama
+    readiness-file/SKILL.md        crea o rellena el .deploy-readiness.json del worker de PRs
     pre-pr-review/
       SKILL.md                         orquestación: alcance → lanzar → agregar
       references/findings-contract.md  esquema JSON + las 11 reglas duras (lo lee todo revisor)
