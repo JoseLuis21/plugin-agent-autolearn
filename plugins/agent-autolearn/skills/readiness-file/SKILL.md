@@ -36,6 +36,7 @@ ni backticks.
   "prod": {
     "ecs_service": ["SELIGERIDEAS-VIRGINIA-CLUSTER/seligerideas-virginia-msc-leads-verify-api-PROD-service"],
     "event_rule": ["seligerideas-virginia-LEADS-SCRIPT-PROD-st"],
+    "schedule": ["arn:aws:scheduler:us-east-2:123456789012:schedule/default/leads-ohio-hourly-PROD"],
     "mysql_schema": {"secret": "leads/prod", "key": "DB_DATABASE"}
   }
 }
@@ -45,16 +46,20 @@ ni backticks.
 |---|---|---|---|
 | `lambda` | lista | Nombre o ARN de la funcion | Variables puestas directo en la Lambda |
 | `secret` | lista | Nombre o ARN del secreto (objeto JSON plano) | El codigo o su `.env` las carga de Secrets Manager |
-| `ecs_service` | lista | `cluster/service` | Corre como servicio ECS; ya cubre su `environment` y sus `secrets` |
-| `event_rule` | lista | `regla`, o `bus/regla` fuera del bus default | Corre **solo** como tarea programada de EventBridge |
-| `schedule` | lista | `schedule`, o `grupo/schedule` | Igual, con EventBridge Scheduler |
-| `mysql_schema` | un nombre, o `{"secret", "key"}` | El schema que usa | Si el repo usa MySQL |
+| `ecs_service` | lista | `cluster/service`, o ARN del servicio | Corre como servicio ECS; ya cubre su `environment` y sus `secrets` |
+| `event_rule` | lista | `regla`, `bus/regla` fuera del bus default, o ARN de la regla | Corre **solo** como tarea programada de EventBridge |
+| `schedule` | lista | `schedule`, `grupo/schedule`, o ARN del schedule | Igual, con EventBridge Scheduler |
+| `mysql_schema` | un nombre, o `{"secret", "key"}` | El schema que usa (`secret` admite ARN) | Si el repo usa MySQL |
 
 - Las claves de primer nivel son los entornos del worker (`READINESS_ENVIRONMENTS`; por defecto `dev`
   para la rama `development` y `prod` para la rama `production`).
 - Omite los tipos que el repo no usa. Una variable cuenta como presente si **cualquier** fuente la
   tiene, asi que listar de mas no bloquea: lista lo que el codigo desplegado lee de verdad.
 - Un entorno sin fuentes se declara vacio: `"prod": {}`.
+- **Region.** Un nombre simple se busca en la region del verifier del entorno; un ARN, en la region
+  del ARN. Todo recurso de **otra** region (por ejemplo Ohio, `us-east-2`, con el verifier en
+  Virginia) va como ARN completo; los de la region del verifier siguen con su nombre simple. Ver
+  seccion 4, «Recursos en otra region».
 - Claves `$comment` en el primer nivel se ignoran: si el archivo viene de la plantilla del worker,
   borrala al terminar.
 
@@ -98,6 +103,7 @@ aws --profile PROFILE sts get-caller-identity --query Account --output text
 
 Si falla (sesion SSO vencida: sugiere `aws sso login --profile PROFILE`; sin credenciales), sigue sin
 AWS. La region es la del perfil; si no tiene, pregunta o usa la que aparezca en los archivos del repo.
+Esa es la region base: la del verifier. Si no sabes donde esta el verifier, preguntalo.
 
 **Listados (solo nombres).** Ejecuta los que apliquen segun lo que encontraste en el repo:
 
@@ -122,6 +128,28 @@ Si necesitas confirmar que una Lambda tiene sus variables directas, mira **solo 
 ```bash
 aws --profile PROFILE lambda get-function-configuration --function-name FUNCTION --query "keys(Environment.Variables)" --output text
 ```
+
+**Recursos en otra region.** Un repo puede desplegar parte de sus recursos fuera de la region base.
+Las pistas: una region distinta en los archivos del repo (`us-east-2` en un buildspec, un
+`samconfig.toml`, un ARN), o nombres que la delatan (`OHIO`, `ohio`). Con una pista, repite **solo los
+listados que apliquen** con `--region REGION`, pidiendo el ARN en vez del nombre:
+
+```bash
+aws --profile PROFILE --region REGION lambda list-functions --query "Functions[].FunctionArn" --output text
+aws --profile PROFILE --region REGION secretsmanager list-secrets --query "SecretList[].ARN" --output text
+aws --profile PROFILE --region REGION ecs list-clusters --query "clusterArns" --output text
+aws --profile PROFILE --region REGION ecs list-services --cluster CLUSTER --query "serviceArns" --output text
+aws --profile PROFILE --region REGION events list-rules --query "Rules[?ManagedBy==null].Arn" --output text
+aws --profile PROFILE --region REGION scheduler list-schedules --query "Schedules[].Arn" --output text
+```
+
+- Escribe el ARN **completo y tal cual** lo devolvio AWS; no lo armes a mano.
+- `ecs_service` necesita el ARN de formato nuevo, con el cluster:
+  `arn:aws:ecs:REGION:CUENTA:service/CLUSTER/SERVICIO`. Si `list-services` devuelve
+  `service/SERVICIO` sin cluster, el verifier lo rechaza: dilo.
+- Los secretos y parametros que una task definition referencia ya traen su region en el ARN; no hace
+  falta declararlos aparte.
+- No recorras todas las regiones: busca solo en las que el repo o el usuario senalan.
 
 **Entornos en una misma cuenta.** DEV y PROD pueden compartir cuenta. Separa por el sufijo o prefijo
 del nombre (`-DEV`, `-PROD`, `_dev`, `prod/`...) y por las pistas del repo. Si un recurso no dice a
@@ -153,6 +181,8 @@ python3 -m json.tool ROOT/.deploy-readiness.json
 
 Comprueba ademas, a mano, lo que el worker rechaza: claves desconocidas, `ecs_service` sin `/`,
 `mysql_schema` como lista, nombres con espacios, y ningun `<FILL_ME` si dijiste que esta completo.
+Un ARN tiene que ser del servicio de su clave (`arn:aws:ecs:` en `ecs_service`, `arn:aws:events:` en
+`event_rule`, `arn:aws:scheduler:` en `schedule`): uno cruzado sale `error` con `InvalidName`.
 
 ## 7. Cerrar
 
@@ -160,3 +190,7 @@ Resume en pocas lineas: fuentes por entorno, que quedo como `<FILL_ME>` y por qu
 paso. El worker lee el archivo **de la rama destino del PR**: tiene que llegar a `development` y a
 `production` (o via el PR que lo agrega, que se verifica con su propio archivo sin bloquear). Ofrece hacer
 commit solo si el usuario lo pide.
+
+Si el archivo tiene ARNs de otra region, avisa: el verifier de ese entorno solo lee las regiones de
+su variable `READINESS_ALLOWED_REGIONS` (por ejemplo `us-east-2`). Si no la tiene, esas fuentes
+salen `error` con `RegionNotAllowed` y el PR queda bloqueado hasta configurarla.

@@ -135,6 +135,7 @@ el código desplegado saca sus variables.
   → lee los archivos de despliegue: template.yaml, serverless, buildspec, Dockerfile, task definitions, .env.example
   → con AWS CLI: pregunta el perfil y lista recursos por nombre (lambda, secretsmanager, ecs, events, scheduler)
   → separa DEV y PROD por nombre y pistas del repo; lo que no puede confirmar queda como <FILL_ME>
+  → recursos en otra región (p. ej. Ohio) los escribe como ARN completo, que el verifier lee en su región
   → muestra cada fuente con su evidencia, pregunta y escribe el archivo; commit solo si se pide
 ```
 
